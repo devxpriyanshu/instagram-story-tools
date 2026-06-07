@@ -232,17 +232,25 @@ def _invalidate_insights() -> None:
 
 @app.get("/api/insights")
 def insights(refresh: bool = False):
-    """Non-blocking: returns cached insights instantly, or kicks off a background
-    rebuild and returns {building: true}. Poll /api/insights/progress for the
-    progress bar, then call this again to get the data."""
+    """Stale-while-revalidate: if we have ANY cached data we return it instantly
+    so the dashboard never blocks. A fresh pull (slow + IG-throttled) only runs
+    in the background when forced or stale; the UI shows it as 'refreshing'.
+    Only the very first load with no cache at all returns {building: true}."""
     sess = _require_session()
     now = time.time()
     with _lock:
         cached = _state["insights_cache"]
-        age = now - _state["insights_cached_at"]
-    if cached and not refresh and age < INSIGHTS_TTL:
-        return {**cached, "cached": True, "cached_at": _state["insights_cached_at"]}
+        cached_at = _state["insights_cached_at"]
+    age = now - cached_at
 
+    if cached:
+        refreshing = False
+        if refresh or age >= INSIGHTS_TTL:
+            _start_insights_build(sess)  # background, don't wait
+            refreshing = True
+        return {**cached, "cached": True, "cached_at": cached_at, "refreshing": refreshing}
+
+    # No cache at all (first ever load) — must build before we can show anything.
     progress = _start_insights_build(sess)
     return {"building": True, "progress": progress}
 

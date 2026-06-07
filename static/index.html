@@ -151,29 +151,64 @@ async function loadAll() {
 }
 
 async function refreshInsights(force) {
-  state.insightsLoading = true;
   state.insightsError = null;
-  state.insightsProgress = null;
-  render();
   try {
     let data = await api(`/api/insights${force ? "?refresh=true" : ""}`);
-    // If the server is rebuilding, poll progress until it's ready.
-    while (data && data.building) {
-      await sleep(700);
-      const p = await api("/api/insights/progress");
-      state.insightsProgress = p;
+
+    if (data && data.building) {
+      // First-ever load, no cache yet — show the progress screen.
+      state.insightsLoading = true;
+      state.insightsProgress = null;
       render();
-      if (p.status === "error") throw { detail: { detail: { message: p.error || "build failed" } } };
-      if (p.status === "done") data = await api("/api/insights");
+      while (data && data.building) {
+        await sleep(700);
+        const p = await api("/api/insights/progress");
+        state.insightsProgress = p;
+        render();
+        if (p.status === "error") throw { detail: { detail: { message: p.error || "build failed" } } };
+        if (p.status === "done") data = await api("/api/insights");
+      }
     }
+
+    // We have data — show it immediately, even if a refresh is running behind it.
     state.insights = data;
     state.insightsCachedAt = data.cached_at || (Date.now() / 1000);
+    state.insightsLoading = false;
+    state.insightsProgress = null;
+    state.insightsRefreshing = !!data.refreshing;
+    render();
+
+    // If a background refresh is in flight, poll quietly and swap in fresh data
+    // when it lands — the dashboard stays usable the whole time.
+    if (data.refreshing) pollBackgroundRefresh();
   } catch (e) {
     state.insightsError = e.detail?.detail?.message || e.detail?.detail || "failed to load insights";
+    state.insightsLoading = false;
+    render();
   }
-  state.insightsLoading = false;
-  state.insightsProgress = null;
-  render();
+}
+
+async function pollBackgroundRefresh() {
+  if (state._bgPolling) return;
+  state._bgPolling = true;
+  try {
+    while (true) {
+      await sleep(2500);
+      let p;
+      try { p = await api("/api/insights/progress"); } catch { continue; }
+      if (p.status === "done") {
+        const fresh = await api("/api/insights");
+        state.insights = fresh;
+        state.insightsCachedAt = fresh.cached_at || (Date.now() / 1000);
+        state.insightsRefreshing = false;
+        render();
+        break;
+      }
+      if (p.status === "error") { state.insightsRefreshing = false; render(); break; }
+    }
+  } finally {
+    state._bgPolling = false;
+  }
 }
 
 function dashboardView() {
@@ -237,12 +272,13 @@ function statsView() {
 
   const bar = document.createElement("div");
   bar.className = "flex items-center justify-between mb-2";
+  const busy = state.insightsRefreshing || state.insightsLoading;
   bar.innerHTML = `
-    <div class="text-xs text-slate-500">${state.insightsCachedAt ? "Updated " + relTime(state.insightsCachedAt) : ""}</div>
+    <div class="text-xs text-slate-500">${busy ? "<span class='text-indigo-600'>Refreshing in the background…</span>" : (state.insightsCachedAt ? "Updated " + relTime(state.insightsCachedAt) : "")}</div>
     <button id="refresh" class="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50">
-      <span class="${state.insightsLoading ? "animate-spin" : ""}">↻</span> Refresh
+      <span class="inline-block ${busy ? "animate-spin" : ""}">↻</span> Refresh
     </button>`;
-  bar.querySelector("#refresh").disabled = state.insightsLoading;
+  bar.querySelector("#refresh").disabled = busy;
   bar.querySelector("#refresh").onclick = () => refreshInsights(true);
   wrap.append(bar);
 
