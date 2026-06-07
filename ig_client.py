@@ -229,6 +229,7 @@ class IGSession:
         should_stop: Callable[[], bool] | None = None,
         min_delay: int = DEFAULT_MIN_DELAY,
         max_delay: int = DEFAULT_MAX_DELAY,
+        username_map: dict[str, str] | None = None,
     ) -> dict:
         """
         action: unfollow | follow | hide_story | unhide_story | block | unblock
@@ -248,53 +249,70 @@ class IGSession:
 
         whitelist = {u.lower() for u in (whitelist_usernames or set())}
         cap = ACTION_DAILY_CAP.get(action, DAILY_ACTION_CAP)
+        umap = username_map or {}
         results = {"ok": [], "skipped": [], "failed": [], "stopped": False}
 
-        for idx, uid in enumerate(user_ids):
-            if should_stop and should_stop():
-                results["stopped"] = True
-                break
+        # instagrapi adds its own delay_range jitter inside every request. At fast
+        # speeds that internal jitter dominates and the user's choice does nothing,
+        # so scale it to the requested pace. Reads/writes restore it afterward.
+        old_delay = self.client.delay_range
+        if max_delay <= 5:
+            self.client.delay_range = [0, max(0.5, min_delay)]
 
-            # Resolve username for whitelist check + reporting (cheap if cached)
-            try:
-                username = self.client.username_from_user_id(int(uid))
-            except Exception:
-                username = uid
+        try:
+            for idx, uid in enumerate(user_ids):
+                if should_stop and should_stop():
+                    results["stopped"] = True
+                    break
 
-            if username and username.lower() in whitelist:
-                results["skipped"].append({"user_id": uid, "username": username, "reason": "whitelist"})
+                # Username from the supplied map (no network); only fall back to a
+                # lookup if we don't already know it. Saves a request per user.
+                username = umap.get(str(uid))
+                if not username:
+                    if whitelist:
+                        try:
+                            username = self.client.username_from_user_id(int(uid))
+                        except Exception:
+                            username = str(uid)
+                    else:
+                        username = str(uid)
+
+                if username and username.lower() in whitelist:
+                    results["skipped"].append({"user_id": uid, "username": username, "reason": "whitelist"})
+                    if on_progress:
+                        on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": "skipped"})
+                    continue
+
+                if self.counter.bump() > cap:
+                    results["stopped"] = True
+                    results["failed"].append({"user_id": uid, "username": username, "reason": f"daily cap reached ({cap})"})
+                    break
+
+                try:
+                    runner(int(uid))
+                    results["ok"].append({"user_id": uid, "username": username})
+                    status = "ok"
+                except PleaseWaitFewMinutes as e:
+                    results["failed"].append({"user_id": uid, "username": username, "reason": f"rate limited: {e}"})
+                    results["stopped"] = True
+                    if on_progress:
+                        on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": "rate_limited"})
+                    break
+                except Exception as e:
+                    results["failed"].append({"user_id": uid, "username": username, "reason": str(e)})
+                    status = "failed"
+
                 if on_progress:
-                    on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": "skipped"})
-                continue
+                    on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": status})
 
-            if self.counter.bump() > cap:
-                results["stopped"] = True
-                results["failed"].append({"user_id": uid, "username": username, "reason": f"daily cap reached ({cap})"})
-                break
+                # Persist session frequently in case the process dies mid-run.
+                if idx % 10 == 0:
+                    self.save()
 
-            try:
-                runner(int(uid))
-                results["ok"].append({"user_id": uid, "username": username})
-                status = "ok"
-            except PleaseWaitFewMinutes as e:
-                results["failed"].append({"user_id": uid, "username": username, "reason": f"rate limited: {e}"})
-                results["stopped"] = True
-                if on_progress:
-                    on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": "rate_limited"})
-                break
-            except Exception as e:
-                results["failed"].append({"user_id": uid, "username": username, "reason": str(e)})
-                status = "failed"
-
-            if on_progress:
-                on_progress({"index": idx + 1, "total": len(user_ids), "username": username, "status": status})
-
-            # Persist session frequently in case the process dies mid-run.
-            if idx % 10 == 0:
-                self.save()
-
-            if idx < len(user_ids) - 1:
-                time.sleep(random.uniform(min_delay, max_delay))
+                if idx < len(user_ids) - 1:
+                    time.sleep(random.uniform(min_delay, max_delay))
+        finally:
+            self.client.delay_range = old_delay
 
         self.save()
         return results

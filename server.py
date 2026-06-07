@@ -270,11 +270,26 @@ def follower_ids():
 
 
 # --------- routes: bulk jobs ---------
+def _username_map_from_cache() -> dict:
+    """pk -> username from the cached insights, so bulk jobs don't spend a
+    network request per user just to look up names."""
+    out: dict = {}
+    with _lock:
+        cache = _state["insights_cache"]
+    if not cache:
+        return out
+    for key in ("followers", "following", "non_followers", "fans"):
+        for u in cache.get(key, []):
+            out[str(u["pk"])] = u["username"]
+    return out
+
+
 @app.post("/api/bulk")
 def bulk(body: BulkBody):
     sess = _require_session()
     job_id = uuid.uuid4().hex[:12]
     whitelist = set(_load_whitelist())
+    username_map = _username_map_from_cache()
 
     with _lock:
         # Cap memory: keep only 50 most recent jobs
@@ -318,6 +333,7 @@ def bulk(body: BulkBody):
                 should_stop=should_stop,
                 min_delay=body.min_delay,
                 max_delay=body.max_delay,
+                username_map=username_map,
             )
             with _lock:
                 job["result"] = result
