@@ -62,16 +62,23 @@ def _load_persisted_insights() -> None:
 
 @app.on_event("startup")
 def _restore_session_on_startup() -> None:
-    """Survive restarts: if exactly one saved session exists, restore it from
-    cookies so the user stays logged in without re-entering a password."""
+    """Survive restarts: restore the saved session + cached insights. The session
+    restore makes a network call to Instagram (to verify cookies) which can be
+    slow/throttled, so it runs in a BACKGROUND thread — otherwise it would block
+    the server from binding and make the page 'take forever to load'."""
+    _load_persisted_insights()  # local file, instant — do it inline
+
     sessions = [p for p in DATA_DIR.glob("*.json") if p.name not in _NON_SESSION_FILES]
     if len(sessions) != 1:
         return
     username = sessions[0].stem
-    sess = restore_session(username)
-    if sess:
-        _state["session"] = sess
-    _load_persisted_insights()
+
+    def _restore():
+        sess = restore_session(username)
+        if sess:
+            _state["session"] = sess
+
+    threading.Thread(target=_restore, daemon=True).start()
 
 # --------- in-memory state ---------
 # Single-user local app — no auth, no multi-tenant. Keep the active session in

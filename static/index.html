@@ -214,10 +214,10 @@ async function pollBackgroundRefresh() {
 function dashboardView() {
   const root = document.createElement("div");
   if (!state.insights) {
-    root.append(headerView(), insightsLoadingView(), whitelistView(), jobView());
+    root.append(titleBar(), headerView(), insightsLoadingView(), whitelistView(), jobView());
     return root;
   }
-  root.append(headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), jobView());
+  root.append(titleBar(), headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), jobView());
   return root;
 }
 
@@ -246,22 +246,34 @@ function insightsLoadingView() {
 }
 
 function headerView() {
+  const profile = `https://www.instagram.com/${state.me.username}/`;
   const el = document.createElement("div");
-  el.className = "flex items-center justify-between mb-6";
+  el.className = "flex items-center justify-between gap-3 mb-6 bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-4";
   el.innerHTML = `
-    <div class="flex items-center gap-3">
-      ${state.me.profile_pic_url ? `<img src="${imgSrc(state.me.profile_pic_url)}" class="w-10 h-10 rounded-full object-cover bg-slate-200" onerror="this.style.visibility='hidden'" />` : ""}
-      <div>
-        <div class="font-semibold">@${state.me.username}</div>
-        <div class="text-xs text-slate-500">${state.me.full_name || ""}</div>
+    <a href="${profile}" target="_blank" rel="noopener" class="flex items-center gap-3 group min-w-0">
+      ${state.me.profile_pic_url
+        ? `<img src="${imgSrc(state.me.profile_pic_url)}" class="w-11 h-11 rounded-full object-cover bg-slate-200 ring-2 ring-indigo-100" onerror="this.style.visibility='hidden'" />`
+        : `<div class="w-11 h-11 rounded-full bg-indigo-100 grid place-items-center text-indigo-600 font-semibold">${(state.me.username[0]||"?").toUpperCase()}</div>`}
+      <div class="min-w-0">
+        <div class="font-semibold truncate group-hover:text-indigo-600">@${state.me.username}</div>
+        <div class="text-xs text-slate-500 truncate">${state.me.full_name || "View profile ↗"}</div>
       </div>
-    </div>
-    <button id="logout" class="text-sm text-slate-600 hover:text-slate-900">Sign out</button>
+    </a>
+    <button id="logout" class="text-sm text-slate-500 hover:text-red-600 shrink-0 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">Sign out</button>
   `;
   el.querySelector("#logout").onclick = async () => {
     await api("/api/logout", { method: "POST" });
     state.me = null; state.insights = null; render();
   };
+  return el;
+}
+
+function titleBar() {
+  const el = document.createElement("div");
+  el.className = "flex items-center gap-2 mb-4";
+  el.innerHTML = `
+    <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white font-bold text-sm">IG</div>
+    <div class="text-lg font-semibold tracking-tight">Story & Follower Tools</div>`;
   return el;
 }
 
@@ -443,26 +455,38 @@ function listView() {
   }
 
   for (const u of items) {
-    const row = document.createElement("label");
-    row.className = "flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer";
+    const selected = state.selectedIds.has(u.pk);
+    const profile = `https://www.instagram.com/${u.username}/`;
+    const row = document.createElement("div");
+    row.className = `flex items-center gap-3 px-3 py-2.5 cursor-pointer transition ${selected ? "bg-indigo-50/60" : "hover:bg-slate-50"}`;
     row.innerHTML = `
-      <input type="checkbox" data-pk="${u.pk}" ${state.selectedIds.has(u.pk) ? "checked" : ""} />
-      ${u.profile_pic_url ? `<img src="${imgSrc(u.profile_pic_url)}" loading="lazy" class="w-8 h-8 rounded-full object-cover bg-slate-200" onerror="this.style.visibility='hidden'" />` : `<div class="w-8 h-8 rounded-full bg-slate-200"></div>`}
-      <div class="flex-1">
-        <div class="text-sm font-medium">@${u.username}
-          ${u.is_verified ? '<span class="pill bg-blue-100 text-blue-700 ml-1">verified</span>' : ""}
-          ${u.is_private ? '<span class="pill bg-slate-100 text-slate-600 ml-1">private</span>' : ""}
-          ${state.whitelist.includes(u.username.toLowerCase()) ? '<span class="pill bg-amber-100 text-amber-700 ml-1">whitelisted</span>' : ""}
-          ${u.story_hidden ? '<span class="pill bg-indigo-100 text-indigo-700 ml-1">story hidden</span>' : ""}
+      <input type="checkbox" class="w-4 h-4 accent-indigo-600 shrink-0" data-pk="${u.pk}" ${selected ? "checked" : ""} />
+      <a href="${profile}" target="_blank" rel="noopener" class="shrink-0" title="Open @${u.username} on Instagram">
+        ${u.profile_pic_url
+          ? `<img src="${imgSrc(u.profile_pic_url)}" loading="lazy" class="w-9 h-9 rounded-full object-cover bg-slate-200 ring-1 ring-slate-200" onerror="this.style.visibility='hidden'" />`
+          : `<div class="w-9 h-9 rounded-full bg-slate-200 grid place-items-center text-xs text-slate-500">${(u.username[0] || "?").toUpperCase()}</div>`}
+      </a>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm flex items-center gap-1 flex-wrap">
+          <a href="${profile}" target="_blank" rel="noopener" class="font-medium text-slate-900 hover:text-indigo-600 hover:underline truncate">@${u.username}</a>
+          ${u.is_verified ? '<span class="pill bg-blue-100 text-blue-700">verified</span>' : ""}
+          ${u.is_private ? '<span class="pill bg-slate-100 text-slate-600">private</span>' : ""}
+          ${state.whitelist.includes(u.username.toLowerCase()) ? '<span class="pill bg-amber-100 text-amber-700">whitelisted</span>' : ""}
+          ${u.story_hidden ? '<span class="pill bg-indigo-100 text-indigo-700">story hidden</span>' : ""}
         </div>
-        <div class="text-xs text-slate-500">${u.full_name || ""}</div>
+        ${u.full_name ? `<div class="text-xs text-slate-500 truncate">${u.full_name}</div>` : ""}
       </div>
+      <a href="${profile}" target="_blank" rel="noopener" class="shrink-0 text-slate-300 hover:text-indigo-600 px-1" title="Open profile" onclick="event.stopPropagation()">↗</a>
     `;
-    row.querySelector("input").onchange = (e) => {
-      if (e.target.checked) state.selectedIds.add(u.pk);
-      else state.selectedIds.delete(u.pk);
+    const cb = row.querySelector("input");
+    const toggle = () => {
+      if (state.selectedIds.has(u.pk)) state.selectedIds.delete(u.pk);
+      else state.selectedIds.add(u.pk);
       render();
     };
+    cb.onclick = (e) => { e.stopPropagation(); toggle(); };
+    // Click anywhere on the row toggles, EXCEPT on the profile links.
+    row.onclick = (e) => { if (e.target.closest("a")) return; toggle(); };
     el.append(row);
   }
   wrap.append(el);
@@ -663,13 +687,20 @@ async function runBulk(action, user_ids, opts = {}) {
 // ---------- boot ----------
 (async () => {
   ensureNotifyPermission();
-  try {
-    state.me = await api("/api/me");
-    render();        // dashboard shell now
-    loadAll();       // insights stream in behind a spinner
-  } catch {
-    render();        // not logged in -> login view
+  // Session restore runs in a background thread on the server and may take a
+  // moment, so retry /api/me a few times before falling back to the login view.
+  for (let i = 0; i < 6; i++) {
+    try {
+      state.me = await api("/api/me");
+      render();        // dashboard shell now
+      loadAll();       // insights load (cached = instant)
+      return;
+    } catch (e) {
+      if (i === 5) break;
+      await sleep(600);
+    }
   }
+  render();            // not logged in -> login view
 })();
 </script>
 </body>
