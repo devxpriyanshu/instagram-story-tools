@@ -240,6 +240,8 @@ function tabsView() {
   const el = document.createElement("div");
   el.className = "flex gap-2 mb-3";
   const tabs = [
+    ["followers", `Followers (${state.insights.followers.length})`],
+    ["following", `Following (${state.insights.following.length})`],
     ["non_followers", `Doesn't follow back (${state.insights.non_followers.length})`],
     ["fans", `You don't follow back (${state.insights.fans.length})`],
   ];
@@ -323,10 +325,16 @@ function actionBar() {
   el.innerHTML = `<div class="text-sm font-medium mb-3">Actions on selection (${ids.length})</div>`;
   const row1 = document.createElement("div");
   row1.className = "flex flex-wrap gap-2 mb-3";
-  if (tab === "non_followers") {
+  // "following" + "non_followers" are accounts you follow -> offer Unfollow.
+  // "fans" are accounts you don't follow -> offer Follow back.
+  // "followers" is mixed, so offer both.
+  if (tab === "non_followers" || tab === "following") {
     row1.append(button("Unfollow selected", "unfollow", true));
-  } else {
+  } else if (tab === "fans") {
     row1.append(button("Follow back selected", "follow"));
+  } else { // followers
+    row1.append(button("Follow back selected", "follow"));
+    row1.append(button("Unfollow selected", "unfollow", true));
   }
   row1.append(button("Hide story from selected", "hide_story"));
   row1.append(button("Unhide story for selected", "unhide_story"));

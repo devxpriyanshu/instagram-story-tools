@@ -176,6 +176,8 @@ class IGSession:
             "following_count": len(following_ids),
             "mutual_count": len(mutuals_ids),
             "hidden_count": len(hidden_ids & follower_ids),
+            "followers": to_list(follower_ids, followers),
+            "following": to_list(following_ids, following),
             "non_followers": to_list(non_followers_ids, following),
             "fans": to_list(fans_ids, followers),
         }
