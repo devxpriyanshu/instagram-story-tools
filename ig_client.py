@@ -129,23 +129,60 @@ class IGSession:
 
     def hidden_story_user_ids(self) -> set[str]:
         """IDs you've already hidden your story from (IG's 'blocked reels' list).
-        Used so the UI can badge people as already-hidden and so a hide-all run
-        can skip them. Returns empty set if the endpoint is unavailable."""
+        Used to badge already-hidden people and skip them on a hide-all run.
+
+        Note: this endpoint requires POST (GET returns 405) and can be paginated.
+        Returns empty set if it's unavailable."""
+        ids: set[str] = set()
+        max_id = ""
         try:
-            result = self.client.private_request("friendships/blocked_reels/")
+            while True:
+                data = {"_uuid": self.client.uuid}
+                if max_id:
+                    data["max_id"] = max_id
+                result = self.client.private_request("friendships/blocked_reels/", data=data)
+                for u in (result.get("users") or []):
+                    pk = u.get("pk")
+                    if pk is not None:
+                        ids.add(str(pk))
+                max_id = result.get("next_max_id") or ""
+                if not result.get("has_more") or not max_id:
+                    break
         except Exception:
-            return set()
-        users = result.get("users") or []
-        return {str(u.get("pk")) for u in users if u.get("pk") is not None}
+            pass
+        return ids
 
     # ---------- insights ----------
-    def insights(self) -> dict:
-        my_id = self.client.user_id
-        followers = self.client.user_followers(my_id, amount=0)  # 0 = all
-        following = self.client.user_following(my_id, amount=0)
+    def insights(self, on_progress=None) -> dict:
+        """Build the full followers/following picture.
 
-        follower_ids = set(followers.keys())
-        following_ids = set(following.keys())
+        `on_progress(stage, done, total)` reports the current stage so the UI can
+        show progress. Read-only pulls use a much smaller delay than write
+        actions (reads rarely trigger action-blocks), so this is faster than the
+        default jitter."""
+        my_id = self.client.user_id
+
+        old_delay = self.client.delay_range
+        self.client.delay_range = [0, 0.5]  # reads are low-risk; cut the jitter
+        try:
+            if on_progress:
+                on_progress("followers", 0, 0)
+            # use_cache=False is critical: instagrapi caches these lists in memory,
+            # so without it a rebuild after unfollowing still shows the old list.
+            followers = self.client.user_followers(my_id, use_cache=False, amount=0)
+            if on_progress:
+                on_progress("following", len(followers), 0)
+            following = self.client.user_following(my_id, use_cache=False, amount=0)
+        finally:
+            self.client.delay_range = old_delay
+
+        if on_progress:
+            on_progress("analyzing", 0, 0)
+
+        follower_ids = {str(k) for k in followers.keys()}
+        following_ids = {str(k) for k in following.keys()}
+        followers = {str(k): v for k, v in followers.items()}
+        following = {str(k): v for k, v in following.items()}
 
         non_followers_ids = following_ids - follower_ids   # you follow, they don't follow back
         fans_ids = follower_ids - following_ids            # they follow you, you don't follow back

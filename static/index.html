@@ -40,7 +40,10 @@ const state = {
   search: "",
   insightsLoading: false,
   insightsCachedAt: 0,
+  insightsProgress: null,
 };
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // IG CDN blocks hotlinked images from localhost, so route them through our proxy.
 function imgSrc(url) {
@@ -150,15 +153,26 @@ async function loadAll() {
 async function refreshInsights(force) {
   state.insightsLoading = true;
   state.insightsError = null;
+  state.insightsProgress = null;
   render();
   try {
-    const data = await api(`/api/insights${force ? "?refresh=true" : ""}`);
+    let data = await api(`/api/insights${force ? "?refresh=true" : ""}`);
+    // If the server is rebuilding, poll progress until it's ready.
+    while (data && data.building) {
+      await sleep(700);
+      const p = await api("/api/insights/progress");
+      state.insightsProgress = p;
+      render();
+      if (p.status === "error") throw { detail: { detail: { message: p.error || "build failed" } } };
+      if (p.status === "done") data = await api("/api/insights");
+    }
     state.insights = data;
     state.insightsCachedAt = data.cached_at || (Date.now() / 1000);
   } catch (e) {
     state.insightsError = e.detail?.detail?.message || e.detail?.detail || "failed to load insights";
   }
   state.insightsLoading = false;
+  state.insightsProgress = null;
   render();
 }
 
@@ -183,10 +197,16 @@ function insightsLoadingView() {
     el.querySelector("#retry").onclick = () => loadAll();
     return el;
   }
+  const p = state.insightsProgress;
+  const stageLabel = { followers: "Loading followers", following: "Loading following", analyzing: "Analyzing", starting: "Starting" }[p?.stage] || "Loading your followers & following";
+  const pct = p && p.total ? Math.min(100, Math.round(100 * p.done / p.total)) : null;
   el.innerHTML = `
     <div class="inline-block w-6 h-6 border-2 border-slate-300 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
-    <div class="text-sm font-medium">Loading your followers & following…</div>
-    <div class="text-xs text-slate-500 mt-1">First load pulls your full lists from Instagram — this can take a minute on large accounts.</div>`;
+    <div class="text-sm font-medium">${stageLabel}…</div>
+    ${p && p.total ? `<div class="text-xs text-slate-500 mt-1">${p.done.toLocaleString()} / ${p.total.toLocaleString()}</div>` : `<div class="text-xs text-slate-500 mt-1">First load pulls your full lists from Instagram.</div>`}
+    <div class="max-w-sm mx-auto mt-3 h-2 bg-slate-200 rounded-full overflow-hidden">
+      <div class="h-full bg-indigo-600 transition-all duration-500" style="width:${pct != null ? pct : 15}%"></div>
+    </div>`;
   return el;
 }
 
@@ -250,7 +270,7 @@ function speedSelect() {
     o.value = key; o.textContent = s.label; o.selected = state.speed === key;
     sel.append(o);
   }
-  sel.onchange = (e) => { state.speed = e.target.value; };
+  sel.onchange = (e) => { state.speed = e.target.value; render(); };
   return sel;
 }
 
@@ -325,7 +345,7 @@ function tabsView() {
     const b = document.createElement("button");
     b.className = `px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition ${state.selectedTab === key ? "bg-indigo-600 text-white shadow-sm" : "bg-white ring-1 ring-slate-200 hover:bg-slate-50"}`;
     b.textContent = label;
-    b.onclick = () => { state.selectedTab = key; state.selectedIds = new Set(); state.search = ""; render(); };
+    b.onclick = () => { state.selectedTab = key; state.selectedIds = new Set(); state.search = ""; state._listScroll = 0; render(); };
     el.append(b);
   }
   return el;
@@ -356,7 +376,15 @@ function listView() {
   wrap.append(searchRow);
 
   const el = document.createElement("div");
+  el.id = "listscroll";
   el.className = "max-h-96 overflow-auto divide-y";
+  // Remember scroll position so toggling a checkbox (which re-renders) doesn't
+  // jump the list back to the top.
+  el.onscroll = () => { state._listScroll = el.scrollTop; };
+  requestAnimationFrame(() => {
+    const live = document.getElementById("listscroll");
+    if (live && state._listScroll) live.scrollTop = state._listScroll;
+  });
 
   // select-all row (acts on the currently filtered set)
   const head = document.createElement("div");
@@ -423,15 +451,20 @@ function actionBar() {
     return list;
   };
   const runStoryAware = (action, list) => {
+    // hide: skip people already hidden (safe, avoids redundant actions).
+    // unhide: NEVER skip — unblocking a non-hidden user is harmless, and the
+    // hidden-detection can be incomplete, so blocking would break the button.
+    if (action === "unhide_story") {
+      runBulk(action, list);
+      return;
+    }
     const targets = refineStory(action, list);
     if (!targets.length) {
-      alert(action === "unhide_story"
-        ? "None of these are currently hidden, so there's nothing to unhide."
-        : "These are all already hidden — nothing to do.");
+      alert("These are all already hidden — nothing to do.");
       return;
     }
     const noop = list.length - targets.length;
-    runBulk(action, targets, noop ? { note: `${noop} already in that state — skipped` } : {});
+    runBulk(action, targets, noop ? { note: `${noop} already hidden — skipped` } : {});
   };
 
   const button = (label, action, danger = false) => {
@@ -451,7 +484,12 @@ function actionBar() {
     return b;
   };
 
-  el.innerHTML = `<div class="text-sm font-medium mb-3">Actions on selection (${ids.length})</div>`;
+  const headRow = document.createElement("div");
+  headRow.className = "flex items-center justify-between gap-2 mb-3 flex-wrap";
+  headRow.innerHTML = `<div class="text-sm font-medium">Actions on selection (${ids.length})</div>
+    <div class="flex items-center gap-2"><span class="text-xs font-medium text-slate-500">Speed</span><span id="abSpeed"></span></div>`;
+  headRow.querySelector("#abSpeed").replaceWith(speedSelect());
+  el.append(headRow);
   const row1 = document.createElement("div");
   row1.className = "flex flex-wrap gap-2 mb-3";
   // "following" + "non_followers" are accounts you follow -> offer Unfollow.
@@ -542,17 +580,22 @@ function jobView() {
 
 async function runBulk(action, user_ids, opts = {}) {
   if (!user_ids.length) return;
-  const { min_delay, max_delay, skipConfirm, note } = opts;
+  const { skipConfirm, note } = opts;
+  // Every action honors the global Speed selector unless a caller overrides it.
+  const s = SPEEDS[state.speed] || SPEEDS.safe;
+  const min_delay = opts.min_delay != null ? opts.min_delay : s.min;
+  const max_delay = opts.max_delay != null ? opts.max_delay : s.max;
+  const risky = state.speed !== "safe" && (action === "unfollow" || action === "follow" || action === "block");
   if (!skipConfirm) {
     const msg = `${action.replace("_", " ")} ${user_ids.length} user(s)?\n` +
       `${note ? "(" + note + ")\n" : ""}` +
-      `\nDelay: ${min_delay || 45}-${max_delay || 90}s between actions.\nWhitelist will be skipped automatically.`;
+      `\nSpeed: ${s.label}\nDelay: ${min_delay}-${max_delay}s between actions.\n` +
+      `${risky ? "\n⚠ Fast follow/unfollow/block is the #1 cause of action-blocks. Safe speed strongly recommended for these.\n" : ""}` +
+      `Whitelist will be skipped automatically.`;
     if (!confirm(msg)) return;
   }
   ensureNotifyPermission();
-  const body = { action, user_ids };
-  if (min_delay != null) body.min_delay = min_delay;
-  if (max_delay != null) body.max_delay = max_delay;
+  const body = { action, user_ids, min_delay, max_delay };
   let r;
   try {
     r = await api("/api/bulk", { method: "POST", body });

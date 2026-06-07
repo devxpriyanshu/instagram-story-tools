@@ -36,7 +36,28 @@ from ig_client import (
 app = FastAPI(title="IG Tools")
 
 # Files in data/ that are NOT account sessions.
-_NON_SESSION_FILES = {"counter.json", "whitelist.json"}
+_NON_SESSION_FILES = {"counter.json", "whitelist.json", "insights_cache.json"}
+INSIGHTS_CACHE_PATH = DATA_DIR / "insights_cache.json"
+
+
+def _persist_insights(data: dict, cached_at: float) -> None:
+    """Save insights to disk so a restart doesn't trigger a fresh (throttle-prone)
+    full follower/following pull."""
+    try:
+        INSIGHTS_CACHE_PATH.write_text(json.dumps({"cached_at": cached_at, "data": data}))
+    except Exception:
+        pass
+
+
+def _load_persisted_insights() -> None:
+    if not INSIGHTS_CACHE_PATH.exists():
+        return
+    try:
+        blob = json.loads(INSIGHTS_CACHE_PATH.read_text())
+        _state["insights_cache"] = blob["data"]
+        _state["insights_cached_at"] = blob["cached_at"]
+    except Exception:
+        pass
 
 
 @app.on_event("startup")
@@ -50,16 +71,57 @@ def _restore_session_on_startup() -> None:
     sess = restore_session(username)
     if sess:
         _state["session"] = sess
+    _load_persisted_insights()
 
 # --------- in-memory state ---------
 # Single-user local app — no auth, no multi-tenant. Keep the active session in
 # memory and persist Instagram cookies to disk via IGSession.save().
-_state: dict = {"session": None, "jobs": {}, "insights_cache": None, "insights_cached_at": 0.0}
+_state: dict = {
+    "session": None,
+    "jobs": {},
+    "insights_cache": None,
+    "insights_cached_at": 0.0,
+    "insights_build": None,  # progress dict while a rebuild is running
+}
 _lock = threading.Lock()
 
 # Insights (full follower + following pull) is the single most expensive call —
 # cache it so repeat dashboard loads are instant. Bulk jobs invalidate it.
 INSIGHTS_TTL = 600  # seconds
+
+
+def _start_insights_build(sess: IGSession) -> dict:
+    """Kick off a background insights rebuild if one isn't already running.
+    Returns the live progress dict."""
+    with _lock:
+        if _state["insights_build"] and _state["insights_build"]["status"] == "building":
+            return _state["insights_build"]
+        progress = {"status": "building", "stage": "starting",
+                    "done": 0, "total": 0, "started_at": time.time()}
+        _state["insights_build"] = progress
+
+    def on_progress(stage: str, done: int, total: int):
+        with _lock:
+            progress["stage"] = stage
+            progress["done"] = done
+            progress["total"] = total
+
+    def run():
+        try:
+            data = sess.insights(on_progress=on_progress)
+            now = time.time()
+            with _lock:
+                _state["insights_cache"] = data
+                _state["insights_cached_at"] = now
+                progress["status"] = "done"
+            _persist_insights(data, now)
+        except Exception as e:
+            with _lock:
+                progress["status"] = "error"
+                progress["error"] = str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return progress
 
 WHITELIST_PATH = DATA_DIR / "whitelist.json"
 
@@ -162,10 +224,17 @@ def _invalidate_insights() -> None:
     with _lock:
         _state["insights_cache"] = None
         _state["insights_cached_at"] = 0.0
+    try:
+        INSIGHTS_CACHE_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 @app.get("/api/insights")
 def insights(refresh: bool = False):
+    """Non-blocking: returns cached insights instantly, or kicks off a background
+    rebuild and returns {building: true}. Poll /api/insights/progress for the
+    progress bar, then call this again to get the data."""
     sess = _require_session()
     now = time.time()
     with _lock:
@@ -174,11 +243,19 @@ def insights(refresh: bool = False):
     if cached and not refresh and age < INSIGHTS_TTL:
         return {**cached, "cached": True, "cached_at": _state["insights_cached_at"]}
 
-    data = sess.insights()
+    progress = _start_insights_build(sess)
+    return {"building": True, "progress": progress}
+
+
+@app.get("/api/insights/progress")
+def insights_progress():
+    _require_session()
     with _lock:
-        _state["insights_cache"] = data
-        _state["insights_cached_at"] = now
-    return {**data, "cached": False, "cached_at": now}
+        build = _state["insights_build"]
+        cached_at = _state["insights_cached_at"]
+    if not build:
+        return {"status": "idle", "cached_at": cached_at}
+    return {**build, "cached_at": cached_at}
 
 
 @app.get("/api/followers/ids")
