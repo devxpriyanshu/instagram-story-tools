@@ -282,6 +282,23 @@ class IGSession:
 
 
 # ---------- login flow ----------
+def restore_session(username: str) -> "IGSession | None":
+    """Rebuild a live session from saved cookies alone — no password. Used on
+    server startup so a restart doesn't force the user to log in again. Returns
+    None if there's no saved session or it's no longer valid."""
+    settings_path = DATA_DIR / f"{username}.json"
+    if not settings_path.exists():
+        return None
+    cl = Client()
+    cl.delay_range = [1, 3]
+    try:
+        cl.set_settings(json.loads(settings_path.read_text()))
+        cl.get_timeline_feed()  # verify the session is alive
+        return IGSession(username=username, client=cl)
+    except Exception:
+        return None
+
+
 def login(username: str, password: str, verification_code: str | None = None) -> IGSession:
     cl = Client()
     cl.delay_range = [1, 3]  # tiny jitter inside instagrapi itself

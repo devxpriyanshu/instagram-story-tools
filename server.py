@@ -30,9 +30,26 @@ from ig_client import (
     LoginError,
     TwoFactorNeeded,
     login as ig_login,
+    restore_session,
 )
 
 app = FastAPI(title="IG Tools")
+
+# Files in data/ that are NOT account sessions.
+_NON_SESSION_FILES = {"counter.json", "whitelist.json"}
+
+
+@app.on_event("startup")
+def _restore_session_on_startup() -> None:
+    """Survive restarts: if exactly one saved session exists, restore it from
+    cookies so the user stays logged in without re-entering a password."""
+    sessions = [p for p in DATA_DIR.glob("*.json") if p.name not in _NON_SESSION_FILES]
+    if len(sessions) != 1:
+        return
+    username = sessions[0].stem
+    sess = restore_session(username)
+    if sess:
+        _state["session"] = sess
 
 # --------- in-memory state ---------
 # Single-user local app — no auth, no multi-tenant. Keep the active session in
