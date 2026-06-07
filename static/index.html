@@ -10,7 +10,7 @@
   .pill { padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
 </style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
+<body class="bg-gradient-to-b from-slate-100 to-slate-50 text-slate-900 min-h-screen">
 <div id="app" class="max-w-5xl mx-auto p-6"></div>
 
 <script>
@@ -37,7 +37,24 @@ const state = {
   job: null,
   jobPoll: null,
   speed: "safe",
+  search: "",
+  insightsLoading: false,
+  insightsCachedAt: 0,
 };
+
+// IG CDN blocks hotlinked images from localhost, so route them through our proxy.
+function imgSrc(url) {
+  return url ? `/api/img?url=${encodeURIComponent(url)}` : "";
+}
+
+function relTime(ts) {
+  if (!ts) return "";
+  const s = Math.floor(Date.now() / 1000 - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
 // Speed tiers -> [min_delay, max_delay] seconds between actions.
 // "safe" is the only one that respects IG's anti-spam comfortably. The faster
@@ -127,11 +144,21 @@ async function loadAll() {
   state.insightsError = null;
   try { state.whitelist = (await api("/api/whitelist")).usernames; } catch {}
   render();
+  await refreshInsights(false);
+}
+
+async function refreshInsights(force) {
+  state.insightsLoading = true;
+  state.insightsError = null;
+  render();
   try {
-    state.insights = await api("/api/insights");
+    const data = await api(`/api/insights${force ? "?refresh=true" : ""}`);
+    state.insights = data;
+    state.insightsCachedAt = data.cached_at || (Date.now() / 1000);
   } catch (e) {
     state.insightsError = e.detail?.detail?.message || e.detail?.detail || "failed to load insights";
   }
+  state.insightsLoading = false;
   render();
 }
 
@@ -168,7 +195,7 @@ function headerView() {
   el.className = "flex items-center justify-between mb-6";
   el.innerHTML = `
     <div class="flex items-center gap-3">
-      ${state.me.profile_pic_url ? `<img src="${state.me.profile_pic_url}" class="w-10 h-10 rounded-full" />` : ""}
+      ${state.me.profile_pic_url ? `<img src="${imgSrc(state.me.profile_pic_url)}" class="w-10 h-10 rounded-full" />` : ""}
       <div>
         <div class="font-semibold">@${state.me.username}</div>
         <div class="text-xs text-slate-500">${state.me.full_name || ""}</div>
@@ -185,14 +212,33 @@ function headerView() {
 
 function statsView() {
   const i = state.insights;
-  const el = document.createElement("div");
-  el.className = "grid grid-cols-3 gap-3 mb-6";
-  const card = (label, value) => `<div class="bg-white rounded-xl p-4 shadow-sm">
+  const wrap = document.createElement("div");
+  wrap.className = "mb-6";
+
+  const bar = document.createElement("div");
+  bar.className = "flex items-center justify-between mb-2";
+  bar.innerHTML = `
+    <div class="text-xs text-slate-500">${state.insightsCachedAt ? "Updated " + relTime(state.insightsCachedAt) : ""}</div>
+    <button id="refresh" class="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50">
+      <span class="${state.insightsLoading ? "animate-spin" : ""}">↻</span> Refresh
+    </button>`;
+  bar.querySelector("#refresh").disabled = state.insightsLoading;
+  bar.querySelector("#refresh").onclick = () => refreshInsights(true);
+  wrap.append(bar);
+
+  const grid = document.createElement("div");
+  grid.className = "grid grid-cols-2 sm:grid-cols-4 gap-3";
+  const card = (label, value, accent) => `<div class="bg-white rounded-2xl p-4 shadow-sm ring-1 ring-slate-900/5">
     <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
-    <div class="text-2xl font-semibold mt-1">${value.toLocaleString()}</div>
+    <div class="text-2xl font-semibold mt-1 ${accent || ""}">${(value || 0).toLocaleString()}</div>
   </div>`;
-  el.innerHTML = card("Followers", i.follower_count) + card("Following", i.following_count) + card("Mutuals", i.mutual_count);
-  return el;
+  grid.innerHTML =
+    card("Followers", i.follower_count) +
+    card("Following", i.following_count) +
+    card("Mutuals", i.mutual_count, "text-emerald-600") +
+    card("Story hidden", i.hidden_count, "text-indigo-600");
+  wrap.append(grid);
+  return wrap;
 }
 
 // ---------- hide/unhide story from ALL followers ----------
@@ -268,7 +314,7 @@ async function runBulkAllFollowers(action) {
 
 function tabsView() {
   const el = document.createElement("div");
-  el.className = "flex gap-2 mb-3";
+  el.className = "flex gap-2 mb-3 overflow-x-auto pb-1";
   const tabs = [
     ["followers", `Followers (${state.insights.followers.length})`],
     ["following", `Following (${state.insights.following.length})`],
@@ -277,37 +323,67 @@ function tabsView() {
   ];
   for (const [key, label] of tabs) {
     const b = document.createElement("button");
-    b.className = `px-3 py-1.5 rounded-full text-sm ${state.selectedTab === key ? "bg-slate-900 text-white" : "bg-white border"}`;
+    b.className = `px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition ${state.selectedTab === key ? "bg-indigo-600 text-white shadow-sm" : "bg-white ring-1 ring-slate-200 hover:bg-slate-50"}`;
     b.textContent = label;
-    b.onclick = () => { state.selectedTab = key; state.selectedIds = new Set(); render(); };
+    b.onclick = () => { state.selectedTab = key; state.selectedIds = new Set(); state.search = ""; render(); };
     el.append(b);
   }
   return el;
 }
 
 function listView() {
-  const items = state.insights[state.selectedTab];
-  const el = document.createElement("div");
-  el.className = "bg-white rounded-xl shadow-sm mb-3 max-h-96 overflow-auto divide-y";
+  const all = state.insights[state.selectedTab];
+  const q = state.search.trim().toLowerCase();
+  const items = q
+    ? all.filter(u => u.username.toLowerCase().includes(q) || (u.full_name || "").toLowerCase().includes(q))
+    : all;
 
-  // select-all row
+  const wrap = document.createElement("div");
+  wrap.className = "bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 mb-3 overflow-hidden";
+
+  // search box
+  const searchRow = document.createElement("div");
+  searchRow.className = "p-3 border-b";
+  searchRow.innerHTML = `<input id="search" type="text" placeholder="Search ${all.length} by username or name…"
+    class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" value="${state.search.replace(/"/g, "&quot;")}" />`;
+  const si = searchRow.querySelector("#search");
+  si.oninput = (e) => {
+    state.search = e.target.value;
+    render();
+    const again = document.getElementById("search");
+    if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  };
+  wrap.append(searchRow);
+
+  const el = document.createElement("div");
+  el.className = "max-h-96 overflow-auto divide-y";
+
+  // select-all row (acts on the currently filtered set)
   const head = document.createElement("div");
-  head.className = "flex items-center gap-3 p-3 bg-slate-50 sticky top-0 text-sm";
-  head.innerHTML = `<input type="checkbox" id="sa" /> <span>Select all (${items.length})</span>
+  head.className = "flex items-center gap-3 p-3 bg-slate-50 sticky top-0 text-sm z-10";
+  head.innerHTML = `<input type="checkbox" id="sa" /> <span>Select all${q ? " filtered" : ""} (${items.length})</span>
     <span class="ml-auto text-slate-500">${state.selectedIds.size} selected</span>`;
-  head.querySelector("#sa").checked = items.length > 0 && state.selectedIds.size === items.length;
+  head.querySelector("#sa").checked = items.length > 0 && items.every(u => state.selectedIds.has(u.pk));
   head.querySelector("#sa").onchange = (e) => {
-    state.selectedIds = e.target.checked ? new Set(items.map(u => u.pk)) : new Set();
+    if (e.target.checked) items.forEach(u => state.selectedIds.add(u.pk));
+    else items.forEach(u => state.selectedIds.delete(u.pk));
     render();
   };
   el.append(head);
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "p-6 text-center text-sm text-slate-400";
+    empty.textContent = q ? "No matches." : "Nobody here.";
+    el.append(empty);
+  }
 
   for (const u of items) {
     const row = document.createElement("label");
     row.className = "flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer";
     row.innerHTML = `
       <input type="checkbox" data-pk="${u.pk}" ${state.selectedIds.has(u.pk) ? "checked" : ""} />
-      ${u.profile_pic_url ? `<img src="${u.profile_pic_url}" class="w-8 h-8 rounded-full" />` : `<div class="w-8 h-8 rounded-full bg-slate-200"></div>`}
+      ${u.profile_pic_url ? `<img src="${imgSrc(u.profile_pic_url)}" loading="lazy" class="w-8 h-8 rounded-full object-cover bg-slate-200" onerror="this.style.visibility='hidden'" />` : `<div class="w-8 h-8 rounded-full bg-slate-200"></div>`}
       <div class="flex-1">
         <div class="text-sm font-medium">@${u.username}
           ${u.is_verified ? '<span class="pill bg-blue-100 text-blue-700 ml-1">verified</span>' : ""}
@@ -325,12 +401,13 @@ function listView() {
     };
     el.append(row);
   }
-  return el;
+  wrap.append(el);
+  return wrap;
 }
 
 function actionBar() {
   const el = document.createElement("div");
-  el.className = "bg-white rounded-xl shadow-sm p-4 mb-6";
+  el.className = "bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-4 mb-6";
   const tab = state.selectedTab;
   const allIds = state.insights[tab].map(u => u.pk);
   const ids = state.selectedIds.size ? [...state.selectedIds] : [];
@@ -384,7 +461,7 @@ function actionBar() {
 
 function whitelistView() {
   const el = document.createElement("div");
-  el.className = "bg-white rounded-xl shadow-sm p-4 mb-6";
+  el.className = "bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-4 mb-6";
   el.innerHTML = `
     <div class="text-sm font-medium mb-2">Whitelist (never act on these usernames)</div>
     <textarea id="wl" rows="3" class="w-full border rounded p-2 text-sm font-mono" placeholder="one username per line">${state.whitelist.join("\n")}</textarea>

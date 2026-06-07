@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
+from urllib.parse import urlparse
+
+import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -33,8 +37,12 @@ app = FastAPI(title="IG Tools")
 # --------- in-memory state ---------
 # Single-user local app — no auth, no multi-tenant. Keep the active session in
 # memory and persist Instagram cookies to disk via IGSession.save().
-_state: dict = {"session": None, "jobs": {}}
+_state: dict = {"session": None, "jobs": {}, "insights_cache": None, "insights_cached_at": 0.0}
 _lock = threading.Lock()
+
+# Insights (full follower + following pull) is the single most expensive call —
+# cache it so repeat dashboard loads are instant. Bulk jobs invalidate it.
+INSIGHTS_TTL = 600  # seconds
 
 WHITELIST_PATH = DATA_DIR / "whitelist.json"
 
@@ -106,11 +114,54 @@ def me():
     return sess.me()
 
 
+# Instagram CDN blocks hotlinked <img> from localhost (403 / expiring signed
+# URLs), so profile pictures never render in the browser. Proxy them through the
+# backend instead. Host is allowlisted to avoid turning this into an open proxy.
+_ALLOWED_IMG_HOSTS = ("cdninstagram.com", "fbcdn.net")
+
+
+@app.get("/api/img")
+def img(url: str):
+    host = (urlparse(url).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in _ALLOWED_IMG_HOSTS):
+        raise HTTPException(400, "host not allowed")
+    try:
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.instagram.com/",
+        })
+        r.raise_for_status()
+    except Exception:
+        raise HTTPException(502, "image fetch failed")
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 # --------- routes: insights ---------
+def _invalidate_insights() -> None:
+    with _lock:
+        _state["insights_cache"] = None
+        _state["insights_cached_at"] = 0.0
+
+
 @app.get("/api/insights")
-def insights():
+def insights(refresh: bool = False):
     sess = _require_session()
-    return sess.insights()
+    now = time.time()
+    with _lock:
+        cached = _state["insights_cache"]
+        age = now - _state["insights_cached_at"]
+    if cached and not refresh and age < INSIGHTS_TTL:
+        return {**cached, "cached": True, "cached_at": _state["insights_cached_at"]}
+
+    data = sess.insights()
+    with _lock:
+        _state["insights_cache"] = data
+        _state["insights_cached_at"] = now
+    return {**data, "cached": False, "cached_at": now}
 
 
 @app.get("/api/followers/ids")
@@ -177,6 +228,7 @@ def bulk(body: BulkBody):
             with _lock:
                 job["result"] = result
                 job["status"] = "stopped" if result.get("stopped") else "done"
+            _invalidate_insights()  # follows/hides changed the data
         except Exception as e:
             with _lock:
                 job["status"] = "error"
