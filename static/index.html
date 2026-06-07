@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IG Tools</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .pill { padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+<div id="app" class="max-w-5xl mx-auto p-6"></div>
+
+<script>
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!r.ok) {
+    let detail;
+    try { detail = await r.json(); } catch { detail = await r.text(); }
+    throw { status: r.status, detail };
+  }
+  return r.json();
+};
+
+const state = {
+  me: null,
+  insights: null,
+  whitelist: [],
+  selectedTab: "non_followers",
+  selectedIds: new Set(),
+  job: null,
+  jobPoll: null,
+  speed: "safe",
+};
+
+// Speed tiers -> [min_delay, max_delay] seconds between actions.
+// "safe" is the only one that respects IG's anti-spam comfortably. The faster
+// tiers carry real action-block / account-disable risk — that's IG, not us.
+const SPEEDS = {
+  safe:     { label: "Safe (45–90s) — recommended", min: 45, max: 90 },
+  fast:     { label: "Fast (3–8s) — risky",         min: 3,  max: 8 },
+  reckless: { label: "Reckless (1–2s) — may get you banned", min: 1, max: 2 },
+};
+
+// Desktop notification on job done/fail (#3). Falls back silently if denied.
+function ensureNotifyPermission() {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission === "default") Notification.requestPermission();
+}
+function notify(title, body) {
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(title, { body });
+      return;
+    }
+  } catch {}
+  // Fallback: in-page toast.
+  toast(`${title} — ${body}`);
+}
+function toast(text) {
+  const t = document.createElement("div");
+  t.className = "fixed top-4 right-4 z-50 bg-slate-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg";
+  t.textContent = text;
+  document.body.append(t);
+  setTimeout(() => t.remove(), 5000);
+}
+function notifyJobEnd(job) {
+  const r = job.result || {};
+  const ok = r.ok?.length || 0, failed = r.failed?.length || 0, skipped = r.skipped?.length || 0;
+  if (job.status === "error") notify("Job failed", r.error || "unknown error");
+  else if (job.status === "stopped") notify("Job stopped", `ok ${ok} · failed ${failed} · skipped ${skipped}`);
+  else notify("Job done", `${job.action}: ok ${ok} · failed ${failed} · skipped ${skipped}`);
+}
+
+function render() {
+  const root = document.getElementById("app");
+  if (!state.me) return root.replaceChildren(loginView());
+  root.replaceChildren(dashboardView());
+}
+
+// ---------- login ----------
+function loginView() {
+  const wrap = document.createElement("div");
+  wrap.className = "max-w-sm mx-auto mt-20 bg-white p-6 rounded-xl shadow";
+  wrap.innerHTML = `
+    <h1 class="text-xl font-semibold mb-1">IG Tools</h1>
+    <p class="text-sm text-slate-500 mb-4">Local dashboard. Credentials stay on this machine.</p>
+    <div class="space-y-3">
+      <input id="u" placeholder="username" class="w-full border rounded px-3 py-2" />
+      <input id="p" placeholder="password" type="password" class="w-full border rounded px-3 py-2" />
+      <input id="c" placeholder="2FA code (only if prompted)" class="w-full border rounded px-3 py-2" />
+      <button id="go" class="w-full bg-slate-900 text-white rounded py-2 font-medium hover:bg-slate-800">Sign in</button>
+      <div id="err" class="text-sm text-red-600"></div>
+    </div>
+  `;
+  wrap.querySelector("#go").onclick = async () => {
+    const username = wrap.querySelector("#u").value.trim();
+    const password = wrap.querySelector("#p").value;
+    const verification_code = wrap.querySelector("#c").value.trim() || null;
+    const errEl = wrap.querySelector("#err");
+    errEl.textContent = "";
+    try {
+      const res = await api("/api/login", { method: "POST", body: { username, password, verification_code } });
+      state.me = res.me;
+      await loadAll();
+      render();
+    } catch (e) {
+      const d = e.detail?.detail || e.detail;
+      if (d?.kind === "2fa") errEl.textContent = "2FA required — enter the code from your authenticator and try again.";
+      else if (d?.kind === "challenge") errEl.textContent = d.message;
+      else errEl.textContent = d?.message || JSON.stringify(d);
+    }
+  };
+  return wrap;
+}
+
+// ---------- dashboard ----------
+async function loadAll() {
+  const [insights, wl] = await Promise.all([api("/api/insights"), api("/api/whitelist")]);
+  state.insights = insights;
+  state.whitelist = wl.usernames;
+}
+
+function dashboardView() {
+  const root = document.createElement("div");
+  root.append(headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), jobView());
+  return root;
+}
+
+function headerView() {
+  const el = document.createElement("div");
+  el.className = "flex items-center justify-between mb-6";
+  el.innerHTML = `
+    <div class="flex items-center gap-3">
+      ${state.me.profile_pic_url ? `<img src="${state.me.profile_pic_url}" class="w-10 h-10 rounded-full" />` : ""}
+      <div>
+        <div class="font-semibold">@${state.me.username}</div>
+        <div class="text-xs text-slate-500">${state.me.full_name || ""}</div>
+      </div>
+    </div>
+    <button id="logout" class="text-sm text-slate-600 hover:text-slate-900">Sign out</button>
+  `;
+  el.querySelector("#logout").onclick = async () => {
+    await api("/api/logout", { method: "POST" });
+    state.me = null; state.insights = null; render();
+  };
+  return el;
+}
+
+function statsView() {
+  const i = state.insights;
+  const el = document.createElement("div");
+  el.className = "grid grid-cols-3 gap-3 mb-6";
+  const card = (label, value) => `<div class="bg-white rounded-xl p-4 shadow-sm">
+    <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
+    <div class="text-2xl font-semibold mt-1">${value.toLocaleString()}</div>
+  </div>`;
+  el.innerHTML = card("Followers", i.follower_count) + card("Following", i.following_count) + card("Mutuals", i.mutual_count);
+  return el;
+}
+
+// ---------- hide/unhide story from ALL followers ----------
+function speedSelect() {
+  const sel = document.createElement("select");
+  sel.className = "border rounded px-2 py-2 text-sm bg-white";
+  for (const [key, s] of Object.entries(SPEEDS)) {
+    const o = document.createElement("option");
+    o.value = key; o.textContent = s.label; o.selected = state.speed === key;
+    sel.append(o);
+  }
+  sel.onchange = (e) => { state.speed = e.target.value; };
+  return sel;
+}
+
+function storyAllView() {
+  const el = document.createElement("div");
+  el.className = "bg-white rounded-2xl shadow-sm p-5 mb-6 ring-1 ring-slate-900/5 border-l-4 border-indigo-500";
+  const n = state.insights.follower_count;
+  const hidden = state.insights.hidden_count || 0;
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-1">
+      <div class="text-base font-semibold">Story visibility</div>
+      <span class="pill bg-indigo-50 text-indigo-700">${hidden.toLocaleString()} of ${n.toLocaleString()} hidden</span>
+    </div>
+    <div class="text-xs text-slate-500 mb-4">Hide or unhide your story from every follower in one click. Already-hidden people are skipped on hide; only hidden people are touched on unhide. Whitelist always skipped.</div>
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <span class="text-xs font-medium text-slate-500">Speed</span>
+      <span id="speedSlot"></span>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button id="hideAll" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm">Hide from all followers</button>
+      <button id="unhideAll" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200">Unhide for all followers</button>
+    </div>
+    <div class="text-[11px] text-amber-700 mt-3 flex items-start gap-1">
+      <span>⚠</span><span>Faster than Safe risks an Instagram action-block or permanent account disable. 1000 actions can't finish in under ~20 min at any safe rate — that limit is Instagram's, not this tool's.</span>
+    </div>
+  `;
+  el.querySelector("#speedSlot").replaceWith(speedSelect());
+  el.querySelector("#hideAll").onclick = () => runBulkAllFollowers("hide_story");
+  el.querySelector("#unhideAll").onclick = () => runBulkAllFollowers("unhide_story");
+  return el;
+}
+
+async function runBulkAllFollowers(action) {
+  const verb = action === "hide_story" ? "Hide" : "Unhide";
+  let ids, hidden_ids;
+  try {
+    const r = await api("/api/followers/ids");
+    ids = r.ids; hidden_ids = new Set(r.hidden_ids || []);
+  } catch (e) {
+    alert("Couldn't load follower list: " + (e.detail?.detail?.message || JSON.stringify(e.detail)));
+    return;
+  }
+  // Only act on people whose state actually changes.
+  let targets;
+  if (action === "hide_story") targets = ids.filter(id => !hidden_ids.has(id));
+  else targets = ids.filter(id => hidden_ids.has(id));
+
+  if (!targets.length) {
+    alert(action === "hide_story" ? "Everyone is already hidden." : "Nobody is currently hidden.");
+    return;
+  }
+  const s = SPEEDS[state.speed];
+  const mins = Math.round(targets.length * (s.min + s.max) / 2 / 60);
+  const msg = `${verb} story for ${targets.length} follower(s)?\n\n` +
+    `Speed: ${s.label}\nEstimated time: ~${mins} min\n` +
+    `${state.speed !== "safe" ? "\n⚠ Faster than Safe risks an action-block or account disable.\n" : ""}` +
+    `Whitelist skipped automatically.`;
+  if (!confirm(msg)) return;
+  runBulk(action, targets, { min_delay: s.min, max_delay: s.max, skipConfirm: true });
+}
+
+function tabsView() {
+  const el = document.createElement("div");
+  el.className = "flex gap-2 mb-3";
+  const tabs = [
+    ["non_followers", `Doesn't follow back (${state.insights.non_followers.length})`],
+    ["fans", `You don't follow back (${state.insights.fans.length})`],
+  ];
+  for (const [key, label] of tabs) {
+    const b = document.createElement("button");
+    b.className = `px-3 py-1.5 rounded-full text-sm ${state.selectedTab === key ? "bg-slate-900 text-white" : "bg-white border"}`;
+    b.textContent = label;
+    b.onclick = () => { state.selectedTab = key; state.selectedIds = new Set(); render(); };
+    el.append(b);
+  }
+  return el;
+}
+
+function listView() {
+  const items = state.insights[state.selectedTab];
+  const el = document.createElement("div");
+  el.className = "bg-white rounded-xl shadow-sm mb-3 max-h-96 overflow-auto divide-y";
+
+  // select-all row
+  const head = document.createElement("div");
+  head.className = "flex items-center gap-3 p-3 bg-slate-50 sticky top-0 text-sm";
+  head.innerHTML = `<input type="checkbox" id="sa" /> <span>Select all (${items.length})</span>
+    <span class="ml-auto text-slate-500">${state.selectedIds.size} selected</span>`;
+  head.querySelector("#sa").checked = items.length > 0 && state.selectedIds.size === items.length;
+  head.querySelector("#sa").onchange = (e) => {
+    state.selectedIds = e.target.checked ? new Set(items.map(u => u.pk)) : new Set();
+    render();
+  };
+  el.append(head);
+
+  for (const u of items) {
+    const row = document.createElement("label");
+    row.className = "flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer";
+    row.innerHTML = `
+      <input type="checkbox" data-pk="${u.pk}" ${state.selectedIds.has(u.pk) ? "checked" : ""} />
+      ${u.profile_pic_url ? `<img src="${u.profile_pic_url}" class="w-8 h-8 rounded-full" />` : `<div class="w-8 h-8 rounded-full bg-slate-200"></div>`}
+      <div class="flex-1">
+        <div class="text-sm font-medium">@${u.username}
+          ${u.is_verified ? '<span class="pill bg-blue-100 text-blue-700 ml-1">verified</span>' : ""}
+          ${u.is_private ? '<span class="pill bg-slate-100 text-slate-600 ml-1">private</span>' : ""}
+          ${state.whitelist.includes(u.username.toLowerCase()) ? '<span class="pill bg-amber-100 text-amber-700 ml-1">whitelisted</span>' : ""}
+          ${u.story_hidden ? '<span class="pill bg-indigo-100 text-indigo-700 ml-1">story hidden</span>' : ""}
+        </div>
+        <div class="text-xs text-slate-500">${u.full_name || ""}</div>
+      </div>
+    `;
+    row.querySelector("input").onchange = (e) => {
+      if (e.target.checked) state.selectedIds.add(u.pk);
+      else state.selectedIds.delete(u.pk);
+      render();
+    };
+    el.append(row);
+  }
+  return el;
+}
+
+function actionBar() {
+  const el = document.createElement("div");
+  el.className = "bg-white rounded-xl shadow-sm p-4 mb-6";
+  const tab = state.selectedTab;
+  const allIds = state.insights[tab].map(u => u.pk);
+  const ids = state.selectedIds.size ? [...state.selectedIds] : [];
+
+  const button = (label, action, danger = false) => {
+    const b = document.createElement("button");
+    b.className = `px-3 py-2 rounded text-sm font-medium ${danger ? "bg-red-600 text-white hover:bg-red-700" : "bg-slate-900 text-white hover:bg-slate-800"} disabled:opacity-50`;
+    b.textContent = label;
+    b.disabled = ids.length === 0;
+    b.onclick = () => runBulk(action, ids);
+    return b;
+  };
+
+  const allButton = (label, action, ids) => {
+    const b = document.createElement("button");
+    b.className = "px-3 py-2 rounded text-sm font-medium bg-slate-100 hover:bg-slate-200";
+    b.textContent = label;
+    b.onclick = () => runBulk(action, ids);
+    return b;
+  };
+
+  el.innerHTML = `<div class="text-sm font-medium mb-3">Actions on selection (${ids.length})</div>`;
+  const row1 = document.createElement("div");
+  row1.className = "flex flex-wrap gap-2 mb-3";
+  if (tab === "non_followers") {
+    row1.append(button("Unfollow selected", "unfollow", true));
+  } else {
+    row1.append(button("Follow back selected", "follow"));
+  }
+  row1.append(button("Hide story from selected", "hide_story"));
+  row1.append(button("Unhide story for selected", "unhide_story"));
+  row1.append(button("Block selected", "block", true));
+  row1.append(button("Unblock selected", "unblock"));
+  el.append(row1);
+
+  const row2 = document.createElement("div");
+  row2.className = "flex flex-wrap gap-2 pt-3 border-t";
+  row2.innerHTML = `<div class="text-xs text-slate-500 w-full">Or apply to ALL ${state.insights[tab].length} in current list:</div>`;
+  row2.append(allButton(`Hide story from all`, "hide_story", allIds));
+  row2.append(allButton(`Unhide story for all`, "unhide_story", allIds));
+  el.append(row2);
+
+  return el;
+}
+
+function whitelistView() {
+  const el = document.createElement("div");
+  el.className = "bg-white rounded-xl shadow-sm p-4 mb-6";
+  el.innerHTML = `
+    <div class="text-sm font-medium mb-2">Whitelist (never act on these usernames)</div>
+    <textarea id="wl" rows="3" class="w-full border rounded p-2 text-sm font-mono" placeholder="one username per line">${state.whitelist.join("\n")}</textarea>
+    <button id="save" class="mt-2 px-3 py-1.5 bg-slate-900 text-white rounded text-sm">Save</button>
+    <span id="saved" class="ml-3 text-sm text-green-600 hidden">Saved</span>
+  `;
+  el.querySelector("#save").onclick = async () => {
+    const list = el.querySelector("#wl").value.split("\n").map(s => s.trim()).filter(Boolean);
+    const r = await api("/api/whitelist", { method: "PUT", body: { usernames: list } });
+    state.whitelist = r.usernames;
+    el.querySelector("#saved").classList.remove("hidden");
+    setTimeout(() => el.querySelector("#saved").classList.add("hidden"), 1500);
+  };
+  return el;
+}
+
+function jobView() {
+  const el = document.createElement("div");
+  if (!state.job) return el;
+  el.className = "fixed bottom-4 right-4 bg-white shadow-2xl ring-1 ring-slate-900/10 rounded-2xl p-4 w-96 max-w-[90vw]";
+  const j = state.job;
+  const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
+  const running = j.status === "running";
+  const statusColor = { running: "bg-indigo-500", done: "bg-emerald-500", stopped: "bg-amber-500", stop_requested: "bg-amber-500", error: "bg-red-500" }[j.status] || "bg-slate-400";
+  const evColor = (s) => ({ ok: "text-emerald-600", skipped: "text-slate-400", failed: "text-red-600", rate_limited: "text-amber-600" }[s] || "text-slate-500");
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-2">
+      <div class="flex items-center gap-2 text-sm font-semibold">
+        <span class="inline-block w-2 h-2 rounded-full ${statusColor} ${running ? "animate-pulse" : ""}"></span>
+        ${j.action.replace("_", " ")} — ${j.status.replace("_", " ")}
+      </div>
+      <div class="flex items-center gap-2">
+        ${running ? `<button id="stop" class="text-amber-600 hover:text-amber-700 text-xs font-medium">Stop</button>` : ""}
+        <button id="close" class="text-slate-400 hover:text-slate-900 text-sm">✕</button>
+      </div>
+    </div>
+    <div class="text-xs text-slate-500 mb-2">${j.done}/${j.total} · ${pct}% ${j.current ? "· now @" + j.current : ""}</div>
+    <div class="h-2 bg-slate-200 rounded-full overflow-hidden mb-2">
+      <div class="h-full ${statusColor} transition-all duration-500" style="width:${pct}%"></div>
+    </div>
+    <div class="max-h-32 overflow-auto text-xs font-mono space-y-0.5">
+      ${(j.events || []).slice().reverse().map(e => `<div class="truncate ${evColor(e.status)}">${e.status} @${e.username || ""}</div>`).join("")}
+    </div>
+    ${j.result ? `<div class="text-xs mt-2 flex gap-3"><span class="text-emerald-600">ok ${j.result.ok?.length || 0}</span><span class="text-slate-400">skip ${j.result.skipped?.length || 0}</span><span class="text-red-600">fail ${j.result.failed?.length || 0}</span></div>` : ""}
+  `;
+  const stopBtn = el.querySelector("#stop");
+  if (stopBtn) stopBtn.onclick = async () => {
+    try { await api(`/api/job/${j.id}/stop`, { method: "POST" }); } catch {}
+  };
+  el.querySelector("#close").onclick = () => {
+    if (state.jobPoll) clearInterval(state.jobPoll);
+    state.job = null; state.jobPoll = null; render();
+  };
+  return el;
+}
+
+async function runBulk(action, user_ids, opts = {}) {
+  if (!user_ids.length) return;
+  const { min_delay, max_delay, skipConfirm } = opts;
+  if (!skipConfirm) {
+    const msg = `${action} ${user_ids.length} user(s)?\n\nDelay: ${min_delay || 45}-${max_delay || 90}s between actions.\nWhitelist will be skipped automatically.`;
+    if (!confirm(msg)) return;
+  }
+  ensureNotifyPermission();
+  const body = { action, user_ids };
+  if (min_delay != null) body.min_delay = min_delay;
+  if (max_delay != null) body.max_delay = max_delay;
+  const r = await api("/api/bulk", { method: "POST", body });
+  state.job = { id: r.job_id, action, total: user_ids.length, done: 0, status: "running", events: [] };
+  if (state.jobPoll) clearInterval(state.jobPoll);
+  state.jobPoll = setInterval(async () => {
+    try {
+      const job = await api(`/api/job/${r.job_id}`);
+      state.job = job;
+      if (["done", "stopped", "error"].includes(job.status)) {
+        clearInterval(state.jobPoll);
+        state.jobPoll = null;
+        notifyJobEnd(job);               // desktop notification (#3)
+        // refresh insights after the job ends
+        try { state.insights = await api("/api/insights"); } catch {}
+      }
+      render();
+    } catch (e) { /* ignore transient */ }
+  }, 2000);
+  render();
+}
+
+// ---------- boot ----------
+(async () => {
+  ensureNotifyPermission();
+  try {
+    state.me = await api("/api/me");
+    await loadAll();
+  } catch {}
+  render();
+})();
+</script>
+</body>
+</html>
