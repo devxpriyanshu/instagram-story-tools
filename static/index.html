@@ -108,8 +108,8 @@ function loginView() {
     try {
       const res = await api("/api/login", { method: "POST", body: { username, password, verification_code } });
       state.me = res.me;
-      await loadAll();
-      render();
+      render();            // show dashboard shell immediately
+      loadAll();           // insights load in the background (can take a while)
     } catch (e) {
       const d = e.detail?.detail || e.detail;
       if (d?.kind === "2fa") errEl.textContent = "2FA required — enter the code from your authenticator and try again.";
@@ -121,16 +121,46 @@ function loginView() {
 }
 
 // ---------- dashboard ----------
+// Whitelist is cheap; insights (full follower + following pull) can take minutes
+// on large accounts, so it loads in the background and re-renders when ready.
 async function loadAll() {
-  const [insights, wl] = await Promise.all([api("/api/insights"), api("/api/whitelist")]);
-  state.insights = insights;
-  state.whitelist = wl.usernames;
+  state.insightsError = null;
+  try { state.whitelist = (await api("/api/whitelist")).usernames; } catch {}
+  render();
+  try {
+    state.insights = await api("/api/insights");
+  } catch (e) {
+    state.insightsError = e.detail?.detail?.message || e.detail?.detail || "failed to load insights";
+  }
+  render();
 }
 
 function dashboardView() {
   const root = document.createElement("div");
+  if (!state.insights) {
+    root.append(headerView(), insightsLoadingView(), whitelistView(), jobView());
+    return root;
+  }
   root.append(headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), jobView());
   return root;
+}
+
+function insightsLoadingView() {
+  const el = document.createElement("div");
+  el.className = "bg-white rounded-2xl shadow-sm p-8 mb-6 text-center ring-1 ring-slate-900/5";
+  if (state.insightsError) {
+    el.innerHTML = `
+      <div class="text-sm font-medium text-red-600 mb-2">Couldn't load your lists</div>
+      <div class="text-xs text-slate-500 mb-4">${state.insightsError}</div>
+      <button id="retry" class="px-4 py-2 rounded-lg text-sm bg-slate-900 text-white">Retry</button>`;
+    el.querySelector("#retry").onclick = () => loadAll();
+    return el;
+  }
+  el.innerHTML = `
+    <div class="inline-block w-6 h-6 border-2 border-slate-300 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
+    <div class="text-sm font-medium">Loading your followers & following…</div>
+    <div class="text-xs text-slate-500 mt-1">First load pulls your full lists from Instagram — this can take a minute on large accounts.</div>`;
+  return el;
 }
 
 function headerView() {
@@ -447,9 +477,11 @@ async function runBulk(action, user_ids, opts = {}) {
   ensureNotifyPermission();
   try {
     state.me = await api("/api/me");
-    await loadAll();
-  } catch {}
-  render();
+    render();        // dashboard shell now
+    loadAll();       // insights stream in behind a spinner
+  } catch {
+    render();        // not logged in -> login view
+  }
 })();
 </script>
 </body>
