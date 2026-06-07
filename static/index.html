@@ -195,7 +195,7 @@ function headerView() {
   el.className = "flex items-center justify-between mb-6";
   el.innerHTML = `
     <div class="flex items-center gap-3">
-      ${state.me.profile_pic_url ? `<img src="${imgSrc(state.me.profile_pic_url)}" class="w-10 h-10 rounded-full" />` : ""}
+      ${state.me.profile_pic_url ? `<img src="${imgSrc(state.me.profile_pic_url)}" class="w-10 h-10 rounded-full object-cover bg-slate-200" onerror="this.style.visibility='hidden'" />` : ""}
       <div>
         <div class="font-semibold">@${state.me.username}</div>
         <div class="text-xs text-slate-500">${state.me.full_name || ""}</div>
@@ -409,23 +409,45 @@ function actionBar() {
   const el = document.createElement("div");
   el.className = "bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-4 mb-6";
   const tab = state.selectedTab;
-  const allIds = state.insights[tab].map(u => u.pk);
+  const allItems = state.insights[tab];
+  const allIds = allItems.map(u => u.pk);
   const ids = state.selectedIds.size ? [...state.selectedIds] : [];
+  const hiddenById = new Map(allItems.map(u => [u.pk, !!u.story_hidden]));
+
+  // hide_story only matters for people NOT already hidden; unhide_story only for
+  // people who ARE hidden. Filtering avoids running thousands of no-op actions
+  // (the "I clicked unhide and nothing happened" trap) and explains why.
+  const refineStory = (action, list) => {
+    if (action === "hide_story") return list.filter(id => !hiddenById.get(id));
+    if (action === "unhide_story") return list.filter(id => hiddenById.get(id));
+    return list;
+  };
+  const runStoryAware = (action, list) => {
+    const targets = refineStory(action, list);
+    if (!targets.length) {
+      alert(action === "unhide_story"
+        ? "None of these are currently hidden, so there's nothing to unhide."
+        : "These are all already hidden — nothing to do.");
+      return;
+    }
+    const noop = list.length - targets.length;
+    runBulk(action, targets, noop ? { note: `${noop} already in that state — skipped` } : {});
+  };
 
   const button = (label, action, danger = false) => {
     const b = document.createElement("button");
     b.className = `px-3 py-2 rounded text-sm font-medium ${danger ? "bg-red-600 text-white hover:bg-red-700" : "bg-slate-900 text-white hover:bg-slate-800"} disabled:opacity-50`;
     b.textContent = label;
     b.disabled = ids.length === 0;
-    b.onclick = () => runBulk(action, ids);
+    b.onclick = () => runStoryAware(action, ids);
     return b;
   };
 
-  const allButton = (label, action, ids) => {
+  const allButton = (label, action, list) => {
     const b = document.createElement("button");
     b.className = "px-3 py-2 rounded text-sm font-medium bg-slate-100 hover:bg-slate-200";
     b.textContent = label;
-    b.onclick = () => runBulk(action, ids);
+    b.onclick = () => runStoryAware(action, list);
     return b;
   };
 
@@ -520,16 +542,26 @@ function jobView() {
 
 async function runBulk(action, user_ids, opts = {}) {
   if (!user_ids.length) return;
-  const { min_delay, max_delay, skipConfirm } = opts;
+  const { min_delay, max_delay, skipConfirm, note } = opts;
   if (!skipConfirm) {
-    const msg = `${action} ${user_ids.length} user(s)?\n\nDelay: ${min_delay || 45}-${max_delay || 90}s between actions.\nWhitelist will be skipped automatically.`;
+    const msg = `${action.replace("_", " ")} ${user_ids.length} user(s)?\n` +
+      `${note ? "(" + note + ")\n" : ""}` +
+      `\nDelay: ${min_delay || 45}-${max_delay || 90}s between actions.\nWhitelist will be skipped automatically.`;
     if (!confirm(msg)) return;
   }
   ensureNotifyPermission();
   const body = { action, user_ids };
   if (min_delay != null) body.min_delay = min_delay;
   if (max_delay != null) body.max_delay = max_delay;
-  const r = await api("/api/bulk", { method: "POST", body });
+  let r;
+  try {
+    r = await api("/api/bulk", { method: "POST", body });
+  } catch (e) {
+    const d = e.detail?.detail || e.detail;
+    alert(`Couldn't start ${action.replace("_", " ")}:\n\n${d?.message || (typeof d === "string" ? d : JSON.stringify(d)) || "server error"}`);
+    return;
+  }
+  toast(`Started: ${action.replace("_", " ")} on ${user_ids.length} — see panel, bottom-right`);
   state.job = { id: r.job_id, action, total: user_ids.length, done: 0, status: "running", events: [] };
   if (state.jobPoll) clearInterval(state.jobPoll);
   state.jobPoll = setInterval(async () => {
