@@ -1,0 +1,17 @@
+{
+  "name": "Ghosted — Instagram Story & Follower Manager",
+  "short_name": "Ghosted",
+  "description": "Hide or unhide your Instagram story from all followers in one click. Find non-followers, bulk unfollow, with safe pacing. Local-first and private.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

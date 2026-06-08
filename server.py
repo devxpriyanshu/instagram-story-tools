@@ -408,3 +408,13 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots():
+    return FileResponse(STATIC_DIR / "robots.txt", media_type="text/plain")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC_DIR / "icon.svg", media_type="image/svg+xml")

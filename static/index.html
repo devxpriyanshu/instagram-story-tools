@@ -3,7 +3,31 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>IG Tools</title>
+
+<!-- SEO -->
+<title>Ghosted — Bulk Hide & Unhide Instagram Stories + Follower Manager</title>
+<meta name="description" content="Ghosted lets you hide or unhide your Instagram story from all followers in one click, find who doesn't follow you back, and bulk unfollow — with safe pacing. Runs locally, your credentials never leave your machine." />
+<meta name="keywords" content="instagram, hide story from all, unhide story, bulk unfollow, who doesn't follow me back, instagram followers manager, instagram story privacy" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#6366f1" />
+<link rel="canonical" href="/" />
+
+<!-- Open Graph / social -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Ghosted" />
+<meta property="og:title" content="Ghosted — Hide your Instagram story from everyone, instantly" />
+<meta property="og:description" content="One click to hide/unhide your story from all followers. Find non-followers, bulk unfollow, with safe pacing. Local-first, private." />
+<meta property="og:image" content="/static/og.svg" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Ghosted — Instagram Story & Follower Manager" />
+<meta name="twitter:description" content="Hide/unhide your story from all followers in one click. Private, local-first." />
+<meta name="twitter:image" content="/static/og.svg" />
+
+<!-- Favicon (inline SVG, no extra request) -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%23a855f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M16 9c-5 0-8.5 4.5-9 7 .5 2.5 4 7 9 7s8.5-4.5 9-7c-.5-2.5-4-7-9-7z' fill='none' stroke='white' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='white'/%3E%3Cline x1='8' y1='24' x2='24' y2='8' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%236366f1'/%3E%3C/svg%3E" />
+<link rel="manifest" href="/static/manifest.webmanifest" />
+
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -108,16 +132,41 @@ function render() {
 // ---------- login ----------
 function loginView() {
   const wrap = document.createElement("div");
-  wrap.className = "max-w-sm mx-auto mt-20 bg-white p-6 rounded-xl shadow";
+  wrap.className = "min-h-[80vh] grid md:grid-cols-2 gap-8 items-center max-w-5xl mx-auto pt-10";
   wrap.innerHTML = `
-    <h1 class="text-xl font-semibold mb-1">IG Tools</h1>
-    <p class="text-sm text-slate-500 mb-4">Local dashboard. Credentials stay on this machine.</p>
-    <div class="space-y-3">
-      <input id="u" placeholder="username" class="w-full border rounded px-3 py-2" />
-      <input id="p" placeholder="password" type="password" class="w-full border rounded px-3 py-2" />
-      <input id="c" placeholder="2FA code (only if prompted)" class="w-full border rounded px-3 py-2" />
-      <button id="go" class="w-full bg-slate-900 text-white rounded py-2 font-medium hover:bg-slate-800">Sign in</button>
-      <div id="err" class="text-sm text-red-600"></div>
+    <div class="px-2">
+      <div class="flex items-center gap-2 mb-6">
+        <img src="/static/icon.svg" class="w-9 h-9 rounded-xl" alt="Ghosted" />
+        <span class="text-xl font-bold tracking-tight">Ghosted</span>
+        <span class="pill bg-indigo-100 text-indigo-700 ml-1">beta</span>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
+        Hide your Instagram story<br/>from <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">everyone</span>, in one click.
+      </h1>
+      <p class="text-slate-600 mt-4 text-[15px] leading-relaxed">
+        Bulk hide &amp; unhide your story from all followers, see who doesn't follow you back,
+        and clean up your following — with safe pacing built in.
+      </p>
+      <ul class="mt-6 space-y-2 text-sm text-slate-700">
+        <li class="flex items-center gap-2"><span class="text-indigo-600">✓</span> One-click hide / unhide for all followers</li>
+        <li class="flex items-center gap-2"><span class="text-indigo-600">✓</span> Find non-followers &amp; bulk unfollow</li>
+        <li class="flex items-center gap-2"><span class="text-indigo-600">✓</span> Runs locally — your password never leaves your machine</li>
+      </ul>
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow-xl ring-1 ring-slate-900/5 w-full max-w-sm md:justify-self-end">
+      <h2 class="text-lg font-semibold mb-1">Sign in</h2>
+      <p class="text-xs text-slate-500 mb-4">Use your Instagram login. Stored only on this device.</p>
+      <div class="space-y-3">
+        <input id="u" placeholder="Instagram username" class="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <input id="p" placeholder="Password" type="password" class="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <input id="c" placeholder="2FA code (only if prompted)" class="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <button id="go" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg py-2.5 font-medium hover:opacity-95 transition shadow-sm">Sign in</button>
+        <div id="err" class="text-sm text-red-600"></div>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-4 leading-relaxed">
+        Ghosted uses Instagram's private API and is not affiliated with Instagram. Automation may violate Instagram's Terms — use at your own risk.
+      </p>
     </div>
   `;
   wrap.querySelector("#go").onclick = async () => {
@@ -273,8 +322,9 @@ function titleBar() {
   const el = document.createElement("div");
   el.className = "flex items-center gap-2 mb-4";
   el.innerHTML = `
-    <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white font-bold text-sm">IG</div>
-    <div class="text-lg font-semibold tracking-tight">Story & Follower Tools</div>`;
+    <img src="/static/icon.svg" class="w-8 h-8 rounded-xl" alt="Ghosted" />
+    <div class="text-lg font-bold tracking-tight">Ghosted</div>
+    <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>`;
   return el;
 }
 
