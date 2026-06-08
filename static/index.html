@@ -140,10 +140,19 @@ function toast(text) {
   document.body.append(t);
   setTimeout(() => t.remove(), 5000);
 }
+function jobCapHit(job) {
+  return (job.result?.failed || []).some(f => (f.reason || "").includes("daily cap"));
+}
+function jobRateLimited(job) {
+  return (job.result?.failed || []).some(f => (f.reason || "").toLowerCase().includes("rate limit") || (f.reason || "").includes("wait"));
+}
+
 function notifyJobEnd(job) {
   const r = job.result || {};
   const ok = r.ok?.length || 0, failed = r.failed?.length || 0, skipped = r.skipped?.length || 0;
-  if (job.status === "error") notify("Job failed", r.error || "unknown error");
+  if (jobCapHit(job)) notify("Daily limit reached", "You've hit the 1000-action/day safety cap. It resets tomorrow.");
+  else if (jobRateLimited(job)) notify("Instagram rate-limited you", "Stop now and wait several hours — pushing more risks a block.");
+  else if (job.status === "error") notify("Job failed", r.error || "unknown error");
   else if (job.status === "stopped") notify("Job stopped", `ok ${ok} · failed ${failed} · skipped ${skipped}`);
   else notify("Job done", `${job.action}: ok ${ok} · failed ${failed} · skipped ${skipped}`);
 }
@@ -764,6 +773,8 @@ function jobView() {
       ${(j.events || []).slice().reverse().map(e => `<div class="truncate ${evColor(e.status)}">${e.status} @${e.username || ""}</div>`).join("")}
     </div>
     ${j.result ? `<div class="text-xs mt-2 flex gap-3"><span class="text-emerald-600">ok ${j.result.ok?.length || 0}</span><span class="text-slate-400">skip ${j.result.skipped?.length || 0}</span><span class="text-red-600">fail ${j.result.failed?.length || 0}</span></div>` : ""}
+    ${jobCapHit(j) ? `<div class="text-xs mt-2 p-2 rounded-lg bg-amber-50 text-amber-700">Daily safety cap (1000/day) reached. Resets at midnight — let the account rest.</div>` : ""}
+    ${jobRateLimited(j) ? `<div class="text-xs mt-2 p-2 rounded-lg bg-red-50 text-red-700">Instagram rate-limited you. Stop now and wait several hours — more actions risk a block.</div>` : ""}
   `;
   const stopBtn = el.querySelector("#stop");
   if (stopBtn) stopBtn.onclick = async () => {
