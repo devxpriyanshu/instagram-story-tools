@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -230,6 +231,7 @@ class IGSession:
         min_delay: int = DEFAULT_MIN_DELAY,
         max_delay: int = DEFAULT_MAX_DELAY,
         username_map: dict[str, str] | None = None,
+        concurrency: int = 1,
     ) -> dict:
         """
         action: unfollow | follow | hide_story | unhide_story | block | unblock
@@ -252,12 +254,21 @@ class IGSession:
         umap = username_map or {}
         results = {"ok": [], "skipped": [], "failed": [], "stopped": False}
 
+        # Max-speed path: run actions in parallel with no pacing. The only way to
+        # approach a few-per-second rate — but Instagram rate-limits hard, so
+        # expect 429s / an action-block partway through. Caller opted in.
+        if concurrency and concurrency > 1:
+            return self._bulk_parallel(
+                runner, action, user_ids, whitelist, umap, cap,
+                on_progress, should_stop, concurrency,
+            )
+
         # instagrapi adds its own delay_range jitter inside every request. At fast
         # speeds that internal jitter dominates and the user's choice does nothing,
         # so scale it to the requested pace. Reads/writes restore it afterward.
         old_delay = self.client.delay_range
         if max_delay <= 5:
-            self.client.delay_range = [0, max(0.5, min_delay)]
+            self.client.delay_range = [0, max(0, min_delay)]
 
         try:
             for idx, uid in enumerate(user_ids):
@@ -315,6 +326,71 @@ class IGSession:
             self.client.delay_range = old_delay
 
         self.save()
+        return results
+
+    def _bulk_parallel(self, runner, action, user_ids, whitelist, umap, cap,
+                       on_progress, should_stop, concurrency) -> dict:
+        """Parallel, no-delay execution. Used by the Max speed tier. Thread-safe
+        result/progress/counter via a lock. instagrapi shares one HTTP session,
+        so concurrent calls can occasionally clobber each other — those just land
+        as 'failed'. Stops early on rate-limit or daily cap."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        results = {"ok": [], "skipped": [], "failed": [], "stopped": False}
+        lock = threading.Lock()
+        total = len(user_ids)
+        done = {"n": 0}
+        stop_flag = {"v": False}
+
+        old_delay = self.client.delay_range
+        self.client.delay_range = [0, 0]  # no internal jitter
+
+        def work(uid):
+            if stop_flag["v"]:
+                return
+            if should_stop and should_stop():
+                stop_flag["v"] = True
+                return
+            username = umap.get(str(uid), str(uid))
+            if username and username.lower() in whitelist:
+                with lock:
+                    results["skipped"].append({"user_id": uid, "username": username, "reason": "whitelist"})
+                    done["n"] += 1
+                    if on_progress:
+                        on_progress({"index": done["n"], "total": total, "username": username, "status": "skipped"})
+                return
+            with lock:
+                if self.counter.bump() > cap:
+                    stop_flag["v"] = True
+                    results["stopped"] = True
+                    results["failed"].append({"user_id": uid, "username": username, "reason": f"daily cap reached ({cap})"})
+                    return
+            try:
+                runner(int(uid))
+                status = "ok"
+                with lock:
+                    results["ok"].append({"user_id": uid, "username": username})
+            except PleaseWaitFewMinutes as e:
+                stop_flag["v"] = True
+                status = "rate_limited"
+                with lock:
+                    results["stopped"] = True
+                    results["failed"].append({"user_id": uid, "username": username, "reason": f"rate limited: {e}"})
+            except Exception as e:
+                status = "failed"
+                with lock:
+                    results["failed"].append({"user_id": uid, "username": username, "reason": str(e)})
+            with lock:
+                done["n"] += 1
+                if on_progress:
+                    on_progress({"index": done["n"], "total": total, "username": username, "status": status})
+
+        try:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                list(pool.map(work, user_ids))
+        finally:
+            self.client.delay_range = old_delay
+            self.save()
         return results
 
     # ---------- story hide / unhide via private API ----------

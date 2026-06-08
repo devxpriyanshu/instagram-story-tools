@@ -66,6 +66,7 @@ const SPEEDS = {
   safe:     { label: "Safe (45–90s) — recommended", min: 45, max: 90 },
   fast:     { label: "Fast (3–8s) — risky",         min: 3,  max: 8 },
   reckless: { label: "Reckless (1–2s) — may get you banned", min: 1, max: 2 },
+  max:      { label: "Max (0s, parallel) — WILL likely get blocked", min: 0, max: 0, parallel: 8 },
 };
 
 // Desktop notification on job done/fail (#3). Falls back silently if denied.
@@ -645,17 +646,20 @@ async function runBulk(action, user_ids, opts = {}) {
   const s = SPEEDS[state.speed] || SPEEDS.safe;
   const min_delay = opts.min_delay != null ? opts.min_delay : s.min;
   const max_delay = opts.max_delay != null ? opts.max_delay : s.max;
+  const concurrency = s.parallel || 1;
   const risky = state.speed !== "safe" && (action === "unfollow" || action === "follow" || action === "block");
   if (!skipConfirm) {
+    const pace = concurrency > 1 ? `${concurrency} in parallel, no delay` : `${min_delay}-${max_delay}s between actions`;
     const msg = `${action.replace("_", " ")} ${user_ids.length} user(s)?\n` +
       `${note ? "(" + note + ")\n" : ""}` +
-      `\nSpeed: ${s.label}\nDelay: ${min_delay}-${max_delay}s between actions.\n` +
-      `${risky ? "\n⚠ Fast follow/unfollow/block is the #1 cause of action-blocks. Safe speed strongly recommended for these.\n" : ""}` +
+      `\nSpeed: ${s.label}\nPace: ${pace}.\n` +
+      `${concurrency > 1 ? "\n⚠ Max mode hammers Instagram with no pacing. It WILL likely hit a rate-limit / action-block partway through and may disable the account. Expect it to stop early.\n" : ""}` +
+      `${risky && concurrency === 1 ? "\n⚠ Fast follow/unfollow/block is the #1 cause of action-blocks. Safe speed strongly recommended for these.\n" : ""}` +
       `Whitelist will be skipped automatically.`;
     if (!confirm(msg)) return;
   }
   ensureNotifyPermission();
-  const body = { action, user_ids, min_delay, max_delay };
+  const body = { action, user_ids, min_delay, max_delay, concurrency };
   let r;
   try {
     r = await api("/api/bulk", { method: "POST", body });

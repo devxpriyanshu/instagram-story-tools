@@ -166,6 +166,7 @@ class BulkBody(BaseModel):
     user_ids: list[str]
     min_delay: int = 45
     max_delay: int = 90
+    concurrency: int = 1  # >1 = parallel, no-delay Max mode
 
 
 class WhitelistBody(BaseModel):
@@ -349,6 +350,7 @@ def bulk(body: BulkBody):
                 min_delay=body.min_delay,
                 max_delay=body.max_delay,
                 username_map=username_map,
+                concurrency=max(1, min(body.concurrency, 16)),
             )
             with _lock:
                 job["result"] = result
