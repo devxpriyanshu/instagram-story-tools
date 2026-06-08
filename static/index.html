@@ -280,10 +280,10 @@ async function pollBackgroundRefresh() {
 function dashboardView() {
   const root = document.createElement("div");
   if (!state.insights) {
-    root.append(titleBar(), headerView(), insightsLoadingView(), whitelistView(), jobView());
+    root.append(titleBar(), headerView(), insightsLoadingView(), whitelistView(), footerView(), jobView());
     return root;
   }
-  root.append(titleBar(), headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), jobView());
+  root.append(titleBar(), headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), footerView(), jobView());
   return root;
 }
 
@@ -341,6 +341,17 @@ function titleBar() {
     <img src="/static/icon.svg" class="w-8 h-8 rounded-xl" alt="Ghosted" />
     <div class="text-lg font-bold tracking-tight">Ghosted</div>
     <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>`;
+  return el;
+}
+
+function footerView() {
+  const el = document.createElement("div");
+  el.className = "mt-8 mb-4 pt-5 border-t text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between";
+  const links = [["/about","About"],["/faq","FAQ"],["/privacy","Privacy"],["/terms","Terms"],["/contact","Feedback"]]
+    .map(([h,l]) => `<a href="${h}" target="_blank" class="hover:text-indigo-600">${l}</a>`).join('<span class="text-slate-300">·</span>');
+  el.innerHTML = `
+    <div>© Ghosted — not affiliated with Instagram or Meta.</div>
+    <div class="flex flex-wrap items-center gap-2">${links}</div>`;
   return el;
 }
 

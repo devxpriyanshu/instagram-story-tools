@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import pages
 from ig_client import (
     DATA_DIR,
     ChallengeNeeded,
@@ -171,6 +172,13 @@ class BulkBody(BaseModel):
 
 class WhitelistBody(BaseModel):
     usernames: list[str]
+
+
+class FeedbackBody(BaseModel):
+    message: str
+    email: Optional[str] = None
+    rating: Optional[str] = None
+    page: Optional[str] = None
 
 
 # --------- routes: auth ---------
@@ -410,9 +418,57 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+# --------- content / legal pages (SEO) ---------
+# Registered explicitly (not a catch-all) so they never shadow /api, /static,
+# /robots.txt, etc.
+def _make_page_route(slug: str):
+    def _route():
+        return Response(content=pages.render(slug), media_type="text/html")
+    return _route
+
+
+for _slug in pages.PAGES:
+    app.add_api_route(_slug, _make_page_route(_slug), include_in_schema=False)
+
+
+# --------- feedback ---------
+FEEDBACK_PATH = DATA_DIR / "feedback.json"
+
+
+@app.post("/api/feedback")
+def submit_feedback(body: FeedbackBody):
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(400, "message required")
+    entry = {
+        "message": msg[:5000],
+        "email": (body.email or "").strip()[:200] or None,
+        "rating": body.rating,
+        "page": body.page,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    with _lock:
+        items = []
+        if FEEDBACK_PATH.exists():
+            try:
+                items = json.loads(FEEDBACK_PATH.read_text())
+            except Exception:
+                items = []
+        items.append(entry)
+        FEEDBACK_PATH.write_text(json.dumps(items[-1000:], indent=2))
+    return {"ok": True}
+
+
 @app.get("/robots.txt", include_in_schema=False)
 def robots():
     return FileResponse(STATIC_DIR / "robots.txt", media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap():
+    urls = "".join(f"<url><loc>{s}</loc></url>" for s in pages.all_slugs())
+    xml = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
