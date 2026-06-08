@@ -86,10 +86,13 @@ const FILTERS = {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // 👉 Set your donation link here. India-friendly options:
+//   • UPI deep link:  upi://pay?pa=yourvpa@bank&pn=Ghosted
 //   • Razorpay Payment Page: https://rzp.io/l/yourpage
 //   • Instamojo: https://www.instamojo.com/@yourname
-//   • UPI: a UPI deep link or a page with your UPI ID / QR
+// Until you replace the placeholder below, the donate buttons stay hidden.
 const DONATE_URL = "https://rzp.io/l/your-payment-page";
+// Considered "set" once it no longer contains the placeholder tokens.
+const DONATE_ON = !/your-payment-page|yourpage|yourname|yourvpa/i.test(DONATE_URL);
 
 // IG CDN blocks hotlinked images from localhost, so route them through our proxy.
 function imgSrc(url) {
@@ -347,14 +350,15 @@ function titleBar() {
     <img src="/static/icon.svg" class="w-8 h-8 rounded-xl" alt="Ghosted" />
     <div class="text-lg font-bold tracking-tight">Ghosted</div>
     <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>
-    <a href="${DONATE_URL}" target="_blank" rel="noopener"
+    ${DONATE_ON ? `<a href="${DONATE_URL}" target="_blank" rel="noopener"
        class="ml-auto inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-pink-50 text-pink-600 hover:bg-pink-100 transition">
       ♥ Donate
-    </a>`;
+    </a>` : ""}`;
   return el;
 }
 
 function supportView() {
+  if (!DONATE_ON) return document.createComment("donate not configured");
   const el = document.createElement("div");
   el.className = "bg-gradient-to-r from-indigo-50 to-pink-50 rounded-2xl ring-1 ring-slate-900/5 p-5 mb-6 flex flex-col sm:flex-row items-center gap-4 justify-between";
   el.innerHTML = `
@@ -372,7 +376,8 @@ function supportView() {
 function footerView() {
   const el = document.createElement("div");
   el.className = "mt-8 mb-4 pt-5 border-t text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between";
-  const links = [["/about","About"],["/faq","FAQ"],["/privacy","Privacy"],["/terms","Terms"],["/contact","Feedback"],[DONATE_URL,"Donate ♥"]]
+  const links = [["/about","About"],["/faq","FAQ"],["/privacy","Privacy"],["/terms","Terms"],["/contact","Feedback"]]
+    .concat(DONATE_ON ? [[DONATE_URL,"Donate ♥"]] : [])
     .map(([h,l]) => `<a href="${h}" target="_blank" class="hover:text-indigo-600">${l}</a>`).join('<span class="text-slate-300">·</span>');
   el.innerHTML = `
     <div>© Ghosted — not affiliated with Instagram or Meta.</div>
