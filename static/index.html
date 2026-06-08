@@ -65,6 +65,22 @@ const state = {
   insightsLoading: false,
   insightsCachedAt: 0,
   insightsProgress: null,
+  filters: new Set(),
+};
+
+// List filter chips. Active chips combine with AND. (_followerPks/_followingPks
+// are filled in listView before filtering so the mutual tests work.)
+const FILTERS = {
+  hidden:      { label: "Story hidden",  test: u => u.story_hidden },
+  not_hidden:  { label: "Not hidden",    test: u => !u.story_hidden },
+  mutual:      { label: "Mutual",        test: u => state._followerPks.has(u.pk) && state._followingPks.has(u.pk) },
+  not_mutual:  { label: "Not mutual",    test: u => !(state._followerPks.has(u.pk) && state._followingPks.has(u.pk)) },
+  private:     { label: "Private",       test: u => u.is_private },
+  public:      { label: "Public",        test: u => !u.is_private },
+  verified:    { label: "Verified",      test: u => u.is_verified },
+  no_avatar:   { label: "No photo",      test: u => !u.profile_pic_url },
+  no_name:     { label: "No name",       test: u => !u.full_name },
+  whitelisted: { label: "Whitelisted",   test: u => state.whitelist.includes(u.username.toLowerCase()) },
 };
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -452,10 +468,15 @@ function tabsView() {
 
 function listView() {
   const all = state.insights[state.selectedTab];
+  // Sets used by the mutual filters.
+  state._followerPks = new Set(state.insights.followers.map(u => u.pk));
+  state._followingPks = new Set(state.insights.following.map(u => u.pk));
   const q = state.search.trim().toLowerCase();
-  const items = q
-    ? all.filter(u => u.username.toLowerCase().includes(q) || (u.full_name || "").toLowerCase().includes(q))
-    : all;
+  const active = [...state.filters];
+  const items = all.filter(u => {
+    if (q && !u.username.toLowerCase().includes(q) && !(u.full_name || "").toLowerCase().includes(q)) return false;
+    return active.every(f => FILTERS[f].test(u));
+  });
 
   const wrap = document.createElement("div");
   wrap.className = "bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 mb-3 overflow-hidden";
@@ -474,6 +495,31 @@ function listView() {
   };
   wrap.append(searchRow);
 
+  // filter chips
+  const filterRow = document.createElement("div");
+  filterRow.className = "px-3 py-2 border-b flex items-center gap-2 flex-wrap";
+  for (const [key, f] of Object.entries(FILTERS)) {
+    const on = state.filters.has(key);
+    const count = all.filter(u => FILTERS[key].test(u)).length;
+    const chip = document.createElement("button");
+    chip.className = `px-2.5 py-1 rounded-full text-xs font-medium transition ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`;
+    chip.textContent = `${f.label} (${count})`;
+    chip.onclick = () => {
+      if (on) state.filters.delete(key); else state.filters.add(key);
+      state._listScroll = 0;
+      render();
+    };
+    filterRow.append(chip);
+  }
+  if (active.length) {
+    const clear = document.createElement("button");
+    clear.className = "px-2.5 py-1 rounded-full text-xs font-medium text-red-600 hover:bg-red-50 ml-auto";
+    clear.textContent = "Clear filters";
+    clear.onclick = () => { state.filters.clear(); state._listScroll = 0; render(); };
+    filterRow.append(clear);
+  }
+  wrap.append(filterRow);
+
   const el = document.createElement("div");
   el.id = "listscroll";
   el.className = "max-h-96 overflow-auto divide-y";
@@ -488,7 +534,7 @@ function listView() {
   // select-all row (acts on the currently filtered set)
   const head = document.createElement("div");
   head.className = "flex items-center gap-3 p-3 bg-slate-50 sticky top-0 text-sm z-10";
-  head.innerHTML = `<input type="checkbox" id="sa" /> <span>Select all${q ? " filtered" : ""} (${items.length})</span>
+  head.innerHTML = `<input type="checkbox" id="sa" /> <span>Select all${(q || active.length) ? " filtered" : ""} (${items.length})</span>
     <span class="ml-auto text-slate-500">${state.selectedIds.size} selected</span>`;
   head.querySelector("#sa").checked = items.length > 0 && items.every(u => state.selectedIds.has(u.pk));
   head.querySelector("#sa").onchange = (e) => {
