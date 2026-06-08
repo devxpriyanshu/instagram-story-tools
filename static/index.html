@@ -85,6 +85,12 @@ const FILTERS = {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// 👉 Set your donation link here. India-friendly options:
+//   • Razorpay Payment Page: https://rzp.io/l/yourpage
+//   • Instamojo: https://www.instamojo.com/@yourname
+//   • UPI: a UPI deep link or a page with your UPI ID / QR
+const DONATE_URL = "https://rzp.io/l/your-payment-page";
+
 // IG CDN blocks hotlinked images from localhost, so route them through our proxy.
 function imgSrc(url) {
   return url ? `/api/img?url=${encodeURIComponent(url)}` : "";
@@ -283,7 +289,7 @@ function dashboardView() {
     root.append(titleBar(), headerView(), insightsLoadingView(), whitelistView(), footerView(), jobView());
     return root;
   }
-  root.append(titleBar(), headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), footerView(), jobView());
+  root.append(titleBar(), headerView(), statsView(), storyAllView(), tabsView(), listView(), actionBar(), whitelistView(), supportView(), footerView(), jobView());
   return root;
 }
 
@@ -340,14 +346,33 @@ function titleBar() {
   el.innerHTML = `
     <img src="/static/icon.svg" class="w-8 h-8 rounded-xl" alt="Ghosted" />
     <div class="text-lg font-bold tracking-tight">Ghosted</div>
-    <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>`;
+    <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>
+    <a href="${DONATE_URL}" target="_blank" rel="noopener"
+       class="ml-auto inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-pink-50 text-pink-600 hover:bg-pink-100 transition">
+      ♥ Donate
+    </a>`;
+  return el;
+}
+
+function supportView() {
+  const el = document.createElement("div");
+  el.className = "bg-gradient-to-r from-indigo-50 to-pink-50 rounded-2xl ring-1 ring-slate-900/5 p-5 mb-6 flex flex-col sm:flex-row items-center gap-4 justify-between";
+  el.innerHTML = `
+    <div>
+      <div class="font-semibold text-slate-900">Ghosted is free.</div>
+      <div class="text-sm text-slate-600">If it saved you time, a small tip keeps it alive and ad-free.</div>
+    </div>
+    <a href="${DONATE_URL}" target="_blank" rel="noopener"
+       class="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-pink-600 text-white font-medium hover:bg-pink-700 transition shadow-sm">
+      ♥ Support the project
+    </a>`;
   return el;
 }
 
 function footerView() {
   const el = document.createElement("div");
   el.className = "mt-8 mb-4 pt-5 border-t text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between";
-  const links = [["/about","About"],["/faq","FAQ"],["/privacy","Privacy"],["/terms","Terms"],["/contact","Feedback"]]
+  const links = [["/about","About"],["/faq","FAQ"],["/privacy","Privacy"],["/terms","Terms"],["/contact","Feedback"],[DONATE_URL,"Donate ♥"]]
     .map(([h,l]) => `<a href="${h}" target="_blank" class="hover:text-indigo-600">${l}</a>`).join('<span class="text-slate-300">·</span>');
   el.innerHTML = `
     <div>© Ghosted — not affiliated with Instagram or Meta.</div>

@@ -37,7 +37,7 @@ from ig_client import (
 app = FastAPI(title="IG Tools")
 
 # Files in data/ that are NOT account sessions.
-_NON_SESSION_FILES = {"counter.json", "whitelist.json", "insights_cache.json"}
+_NON_SESSION_FILES = {"counter.json", "whitelist.json", "insights_cache.json", "feedback.json"}
 INSIGHTS_CACHE_PATH = DATA_DIR / "insights_cache.json"
 
 
