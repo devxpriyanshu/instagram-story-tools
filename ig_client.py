@@ -25,8 +25,21 @@ from instagrapi.exceptions import (
     TwoFactorRequired,
 )
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+# Where sessions / cache / whitelist live. In a packaged desktop build the code
+# lives inside a read-only bundle, so data must go in the user's home folder.
+# Override with GHOSTED_DATA_DIR; in dev, an existing ./data is reused.
+def _resolve_data_dir() -> Path:
+    env = os.environ.get("GHOSTED_DATA_DIR")
+    if env:
+        return Path(env).expanduser()
+    local = Path(__file__).parent / "data"
+    if local.exists():
+        return local  # keep using an existing dev data folder
+    return Path.home() / ".ghosted"
+
+
+DATA_DIR = _resolve_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 COUNTER_PATH = DATA_DIR / "counter.json"
 
 # Conservative pacing. Instagram action-blocks accounts that move too fast.

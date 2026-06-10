@@ -1,97 +1,90 @@
-# IG Tools
+# Ghosted — Instagram Story & Follower Manager
 
-Local web dashboard for personal Instagram account hygiene:
+> Hide or unhide your Instagram story from **every follower in one click** — plus find
+> who doesn't follow you back, bulk-unfollow, and clean up your audience. Local-first,
+> private, with safety pacing built in.
 
-- See followers / following / mutuals at a glance
-- Find users who don't follow you back
-- Find users who follow you that you don't follow back
-- Bulk **unfollow / follow / block / unblock**
-- Bulk **hide story** from a list, or **unhide** for a list
-- **Hide / unhide story from ALL followers in one click** — already-hidden people are shown with a badge and skipped automatically
-- Choose a **speed tier** per run (Safe / Fast / Reckless)
-- **Desktop notification** when a job finishes or fails
-- Username **whitelist** (never act on these)
-- Safe pacing: 45–90s jitter between actions; daily cap 150 (1000 for hide/unhide story)
+A full-stack web app (FastAPI + vanilla-JS SPA) that wraps Instagram's private mobile
+API to do the bulk actions the official app and API won't let you do — one person at a
+time is the only native option; Ghosted does the whole list.
 
-Single-user, runs on `localhost`. Credentials stay on your machine.
+![status](https://img.shields.io/badge/status-v1.0-6366f1) ![python](https://img.shields.io/badge/python-3.11-blue) ![license](https://img.shields.io/badge/license-personal%20use-lightgrey)
 
-## Read this first
+---
 
-This uses Instagram's **private mobile API** via `instagrapi`. That API is not officially supported and using it violates Instagram's Terms of Use. Realistic risks:
+## ✨ Features
 
-- Temporary action blocks (hours to days)
-- Permanent account disable, especially for new or low-activity accounts
-- Reach throttling
+- **Hide / unhide your story from all followers** in one click — the headline feature,
+  with already-hidden people detected and skipped automatically.
+- **Find non-followers** — see who you follow that doesn't follow you back, and vice versa.
+- **Bulk actions** — unfollow, follow back, block, unblock, hide/unhide story.
+- **Smart filters** — Story-hidden, Mutual, Private/Public, Verified, No-photo, No-name,
+  Whitelisted — combinable with live search.
+- **Speed tiers** — Safe → Fast → Reckless → Max (parallel), each with its own daily cap,
+  so you trade speed for risk consciously.
+- **Safety first** — per-day action caps, 45–90s pacing on Safe, whitelist, and clear
+  warnings when Instagram rate-limits you.
+- **Live job tracking** — progress bar, event log, desktop notifications, stop button.
+- **Clickable profiles, avatars, dark mode**, and a responsive UI.
 
-The defaults err on the safe side. **Don't lower the delays. Don't run it on a brand-new account. Don't run it on an account you can't afford to lose.** Try it on a throwaway first.
+## 🧱 Tech stack & architecture
 
-## Setup
+| Layer | Tech |
+|-------|------|
+| Backend | **FastAPI** + Uvicorn |
+| Instagram | **instagrapi** (private API wrapper) |
+| Frontend | Vanilla-JS SPA + **Tailwind** (CDN), no build step |
+| Concurrency | `threading` job runner + `ThreadPoolExecutor` for parallel "Max" mode |
+| Persistence | JSON session/cache on disk (local-first) |
+
+Notable engineering:
+
+- **Stale-while-revalidate insights cache** (in-memory + disk) so the dashboard loads
+  instantly and refreshes in the background instead of blocking on a slow, throttled
+  full follower/following pull.
+- **Background, non-blocking session restore** on startup (survives restarts without a
+  re-login) — runs off the request thread so the server binds instantly.
+- **Image proxy** so Instagram-CDN avatars actually render cross-origin from localhost.
+- **Adaptive bulk engine** — per-action + per-speed daily caps, whitelist skipping,
+  cooperative stop, username map to avoid per-user lookups, and a parallel path that
+  hits ~3.7 actions/sec while staying thread-safe.
+- **SEO + content** — server-rendered About/FAQ/Privacy/Terms/Contact pages, Open Graph,
+  sitemap, manifest, favicon, and a feedback API.
+
+## 🚀 Run locally
 
 ```bash
-cd /Users/priyanshudutta/Desktop/DevProjects/instagram
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+uvicorn server:app --port 8001
 ```
 
-## Run
+Open <http://localhost:8001>, sign in with your Instagram credentials (stored only on
+your machine), and use the dashboard.
 
-```bash
-uvicorn server:app --port 8000
-```
+There's also a desktop launcher (`python desktop.py`) that opens it in a native window.
 
-Open <http://localhost:8000>.
+## 📁 Project layout
 
-## How login works
+- [server.py](server.py) — FastAPI app: auth, insights cache, bulk jobs, feedback, pages
+- [ig_client.py](ig_client.py) — instagrapi wrapper: session, insights, bulk engine, caps
+- [pages.py](pages.py) — server-rendered SEO/legal content pages
+- [static/index.html](static/index.html) — single-page dashboard (vanilla JS + Tailwind)
+- [desktop.py](desktop.py) — desktop launcher (pywebview / browser)
+- [GTM.md](GTM.md) — go-to-market analysis
 
-1. Enter your Instagram username + password.
-2. If 2FA is on, you'll be told to retry — paste the 6-digit code from your authenticator into the third box and click sign in again.
-3. If Instagram sends a "challenge" (suspicious login prompt), open the Instagram app on your phone, approve the login, then retry.
-4. After the first successful login, your session is saved to `data/{username}.json` and reused. This avoids repeated fresh logins, which is what usually trips checkpoints.
+## 🔒 Privacy
 
-## Hide / unhide story from all followers
+Your Instagram password is used only to create a session **on your own device** and is
+never sent anywhere else. Follower data is cached locally. Nothing is sold or shared.
 
-The **Story visibility** panel at the top of the dashboard hides (or unhides) your story from every follower in one click:
+## ⚠️ Disclaimer
 
-- It pulls your full follower list, then runs the same paced bulk engine.
-- People you've **already hidden** are shown with a badge and skipped on a hide-all run; an unhide-all run only touches people who are currently hidden. Fewer wasted actions = faster and safer.
-- The **whitelist is always skipped.**
-- Pick a **speed** before running:
+Ghosted is an independent project and is **not affiliated with, endorsed by, or sponsored
+by Instagram or Meta**. It uses Instagram's private API, which automation tools rely on but
+which **violates Instagram's Terms of Use**. Risks include temporary action-blocks, reach
+throttling, or account suspension. Use the **Safe** speed, don't run it on a brand-new
+account, and don't use an account you can't afford to lose. **Use at your own risk.**
 
-  | Tier | Delay/action | ~1000 actions | Risk |
-  |------|--------------|---------------|------|
-  | Safe (default) | 45–90s | days | low |
-  | Fast | 3–8s | ~1.5 h | real ban risk |
-  | Reckless | 1–2s | ~25 min | likely action-block / disable |
-
-> There is **no** way to hide from 1000 people in a minute. Instagram hides per user (one signed request each) and action-blocks accounts that move too fast. The Safe tier is the only one that respects that. Faster tiers exist but can get your account disabled.
-
-## Pacing & safety
-
-- Default delay between actions: **45–90 seconds (random jitter)**
-- Daily cap: **150 actions** per process — except **hide/unhide story, which is capped at 1000** (a "soft" action IG tolerates more of)
-- Whitelist: edit on the dashboard, stored in `data/whitelist.json`. Whitelisted usernames are skipped automatically.
-- If Instagram rate-limits you mid-job (`PleaseWaitFewMinutes`), the job stops and the rest of the queue is preserved as "failed" with the reason — wait several hours before resuming.
-
-## File layout
-
-- [requirements.txt](requirements.txt) — Python deps
-- [server.py](server.py) — FastAPI app, job runner, whitelist
-- [ig_client.py](ig_client.py) — `instagrapi` wrapper, session persistence, bulk action engine
-- [static/index.html](static/index.html) — single-page dashboard (vanilla JS + Tailwind CDN)
-- `data/` — created at runtime; holds session JSON and whitelist (gitignored)
-
-## Known limits
-
-- The `Stop` button on a running job is cooperative — it sets a flag, but the worker only checks between actions. Worst case, one more action runs before it stops.
-- Insights are computed each time you load the dashboard; for accounts with tens of thousands of followers this can take a minute. There's no caching layer yet.
-- Single user only — no auth on the local server. Don't expose port 8000 to the internet.
-
-## Deployment
-
-**Run it locally. It cannot be deployed to a host like Netlify/Vercel**, and shouldn't be put on a public server at all:
-
-- It needs a **persistent Python server** and runs **background jobs for minutes to days** — serverless/static hosts kill those in seconds.
-- Hosting it publicly puts your Instagram credentials on a server and routes API calls through shared datacenter IPs, which Instagram flags fast. That's a quick path to an account ban.
-
-This is a personal localhost tool by design.
+Built as a learning / portfolio project.
