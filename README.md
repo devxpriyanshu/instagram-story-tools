@@ -74,6 +74,18 @@ There's also a desktop launcher (`python desktop.py`) that opens it in a native 
 - [desktop.py](desktop.py) — desktop launcher (pywebview / browser)
 - [GTM.md](GTM.md) — go-to-market analysis
 
+## 💬 Feedback & contributing
+
+Ideas, bug reports, and PRs are welcome:
+
+- **Bugs / features** → [open an Issue](../../issues)
+- **Questions / ideas / connect** → [Discussions](../../discussions)
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup.
+
+## 📜 License
+
+[MIT](LICENSE) — free to use, modify, and share. No warranty.
+
 ## 🔒 Privacy
 
 Your Instagram password is used only to create a session **on your own device** and is
