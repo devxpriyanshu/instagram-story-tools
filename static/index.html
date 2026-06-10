@@ -114,8 +114,8 @@ function relTime(ts) {
 const SPEEDS = {
   safe:     { label: "Safe (45–90s) — recommended", min: 45, max: 90 },
   fast:     { label: "Fast (3–8s) — risky",         min: 3,  max: 8 },
-  reckless: { label: "Reckless (1–2s) — may get you banned", min: 1, max: 2 },
-  max:      { label: "Max (0s, parallel) — WILL likely get blocked", min: 0, max: 0, parallel: 8 },
+  reckless: { label: "Reckless (1–2s) — may get you banned", min: 1, max: 2, cap: 500 },
+  max:      { label: "Max (0s, parallel) — WILL likely get blocked", min: 0, max: 0, parallel: 8, cap: 500 },
 };
 
 // Desktop notification on job done/fail (#3). Falls back silently if denied.
@@ -808,6 +808,7 @@ async function runBulk(action, user_ids, opts = {}) {
   }
   ensureNotifyPermission();
   const body = { action, user_ids, min_delay, max_delay, concurrency };
+  if (s.cap) body.daily_cap = s.cap;   // Reckless/Max get a lower daily ceiling
   let r;
   try {
     r = await api("/api/bulk", { method: "POST", body });

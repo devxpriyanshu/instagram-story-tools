@@ -232,6 +232,7 @@ class IGSession:
         max_delay: int = DEFAULT_MAX_DELAY,
         username_map: dict[str, str] | None = None,
         concurrency: int = 1,
+        daily_cap: int | None = None,
     ) -> dict:
         """
         action: unfollow | follow | hide_story | unhide_story | block | unblock
@@ -251,6 +252,8 @@ class IGSession:
 
         whitelist = {u.lower() for u in (whitelist_usernames or set())}
         cap = ACTION_DAILY_CAP.get(action, DAILY_ACTION_CAP)
+        if daily_cap:  # fast tiers (Reckless/Max) request a lower ceiling
+            cap = min(cap, daily_cap)
         umap = username_map or {}
         results = {"ok": [], "skipped": [], "failed": [], "stopped": False}
 

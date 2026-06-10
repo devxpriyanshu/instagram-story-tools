@@ -168,6 +168,7 @@ class BulkBody(BaseModel):
     min_delay: int = 45
     max_delay: int = 90
     concurrency: int = 1  # >1 = parallel, no-delay Max mode
+    daily_cap: Optional[int] = None  # lower the per-day ceiling for fast tiers
 
 
 class WhitelistBody(BaseModel):
@@ -359,6 +360,7 @@ def bulk(body: BulkBody):
                 max_delay=body.max_delay,
                 username_map=username_map,
                 concurrency=max(1, min(body.concurrency, 16)),
+                daily_cap=body.daily_cap,
             )
             with _lock:
                 job["result"] = result
