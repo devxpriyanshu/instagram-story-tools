@@ -28,14 +28,48 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%236366f1'/%3E%3C/svg%3E" />
 <link rel="manifest" href="/static/manifest.webmanifest" />
 
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+  // Apply saved theme before paint to avoid a flash.
+  try { if (localStorage.getItem("theme") === "dark") document.documentElement.classList.add("dark"); } catch {}
+  window.tailwind = window.tailwind || {};
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: "class" };</script>
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .pill { padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+  :root { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+  body { font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  .pill { padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 500; }
+  /* Smooth theme transition */
+  body, .bg-white, .bg-slate-50 { transition: background-color .2s ease, color .2s ease; }
+
+  /* ---- Dark theme: override Tailwind utilities globally (no per-element edits) ---- */
+  html.dark body { background: #0b1120 !important; color: #e5e7eb; }
+  html.dark .bg-white { background-color: #111827 !important; }
+  html.dark .bg-slate-50 { background-color: #0f172a !important; }
+  html.dark .bg-slate-100 { background-color: #1e293b !important; }
+  html.dark .bg-slate-200 { background-color: #334155 !important; }
+  html.dark .text-slate-900 { color: #f1f5f9 !important; }
+  html.dark .text-slate-700 { color: #cbd5e1 !important; }
+  html.dark .text-slate-600, html.dark .text-slate-500 { color: #94a3b8 !important; }
+  html.dark .text-slate-400 { color: #64748b !important; }
+  html.dark .border, html.dark .border-b, html.dark .border-t, html.dark .divide-y > * { border-color: #1f2937 !important; }
+  html.dark .ring-1 { --tw-ring-color: rgba(255,255,255,.07) !important; }
+  html.dark input, html.dark textarea, html.dark select { background-color: #0f172a !important; border-color: #334155 !important; color: #e5e7eb !important; }
+  html.dark .hover\:bg-slate-50:hover { background-color: #0f172a !important; }
+  html.dark .hover\:bg-slate-200:hover { background-color: #334155 !important; }
+  html.dark .bg-indigo-50 { background-color: rgba(99,102,241,.12) !important; }
+  html.dark .bg-indigo-50\/60 { background-color: rgba(99,102,241,.10) !important; }
+  html.dark .from-slate-100 { --tw-gradient-from: #0b1120 !important; }
+  html.dark .to-slate-50 { --tw-gradient-to: #0b1120 !important; }
+  html.dark .shadow-sm, html.dark .shadow-xl, html.dark .shadow-2xl { --tw-shadow-color: rgba(0,0,0,.5); }
 </style>
 </head>
 <body class="bg-gradient-to-b from-slate-100 to-slate-50 text-slate-900 min-h-screen">
-<div id="app" class="max-w-5xl mx-auto p-6"></div>
+<div id="app" class="max-w-5xl mx-auto p-4 sm:p-6"></div>
 
 <script>
 const api = async (path, opts = {}) => {
@@ -170,9 +204,10 @@ function loginView() {
   wrap.innerHTML = `
     <div class="px-2">
       <div class="flex items-center gap-2 mb-6">
-        <img src="/static/icon.svg" class="w-9 h-9 rounded-xl" alt="Ghosted" />
+        <img src="/static/icon.svg" class="w-9 h-9 rounded-xl shadow-sm" alt="Ghosted" />
         <span class="text-xl font-bold tracking-tight">Ghosted</span>
         <span class="pill bg-indigo-100 text-indigo-700 ml-1">beta</span>
+        <button id="loginTheme" title="Toggle theme" class="ml-auto w-9 h-9 grid place-items-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">${document.documentElement.classList.contains("dark") ? "☀️" : "🌙"}</button>
       </div>
       <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
         Hide your Instagram story<br/>from <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">everyone</span>, in one click.
@@ -203,6 +238,7 @@ function loginView() {
       </p>
     </div>
   `;
+  wrap.querySelector("#loginTheme").onclick = toggleTheme;
   wrap.querySelector("#go").onclick = async () => {
     const username = wrap.querySelector("#u").value.trim();
     const password = wrap.querySelector("#p").value;
@@ -352,17 +388,26 @@ function headerView() {
   return el;
 }
 
+function toggleTheme() {
+  const dark = document.documentElement.classList.toggle("dark");
+  try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch {}
+  render();
+}
+
 function titleBar() {
+  const dark = document.documentElement.classList.contains("dark");
   const el = document.createElement("div");
-  el.className = "flex items-center gap-2 mb-4";
+  el.className = "flex items-center gap-2 mb-5";
   el.innerHTML = `
-    <img src="/static/icon.svg" class="w-8 h-8 rounded-xl" alt="Ghosted" />
+    <img src="/static/icon.svg" class="w-8 h-8 rounded-xl shadow-sm" alt="Ghosted" />
     <div class="text-lg font-bold tracking-tight">Ghosted</div>
     <span class="pill bg-slate-200 text-slate-600 ml-1">beta</span>
-    ${DONATE_ON ? `<a href="${DONATE_URL}" target="_blank" rel="noopener"
-       class="ml-auto inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-pink-50 text-pink-600 hover:bg-pink-100 transition">
-      ♥ Donate
-    </a>` : ""}`;
+    <div class="ml-auto flex items-center gap-2">
+      <button id="theme" title="Toggle theme" class="w-9 h-9 grid place-items-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">${dark ? "☀️" : "🌙"}</button>
+      ${DONATE_ON ? `<a href="${DONATE_URL}" target="_blank" rel="noopener"
+         class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-pink-50 text-pink-600 hover:bg-pink-100 transition">♥ Donate</a>` : ""}
+    </div>`;
+  el.querySelector("#theme").onclick = toggleTheme;
   return el;
 }
 
